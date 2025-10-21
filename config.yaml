@@ -1,0 +1,39 @@
+# 视频处理模块配置文件
+
+# 音频处理配置
+audio:
+  sample_rate: 16000  # 采样率 (Hz)
+  format: "wav"       # 输出格式
+  channels: 1         # 声道数 (单声道)
+  bit_depth: 16       # 位深度
+
+# 视频处理配置
+video:
+  supported_formats: ["mp4", "avi", "mov", "mkv", "mp3", "wav"]
+  temp_dir: "./temp"  # 临时文件目录
+
+# 音频分离配置
+audio_separation:
+  enable_gpu: true           # 启用GPU加速
+  quality_threshold: 0.3     # 背景音乐检测阈值
+  model: "2stems-16kHz"      # Spleeter模型
+
+# 音频合成配置
+audio_merger:
+  sample_rate: 16000         # 目标采样率
+  volume_balance: 0.8        # 人声音量比例
+  fade_duration: 0.1         # 淡入淡出时长
+
+# 默认设置
+defaults:
+  language: "en"      # 默认语言 (英语)
+  output_dir: "./output"  # 默认输出目录
+  enable_separation: true    # 默认启用音频分离
+
+# 日志配置
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+
+
