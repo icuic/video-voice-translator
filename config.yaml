@@ -10,7 +10,7 @@ audio:
 # 视频处理配置
 video:
   supported_formats: ["mp4", "avi", "mov", "mkv", "mp3", "wav"]
-  temp_dir: "./temp"  # 临时文件目录
+  temp_dir: "./data/temp"  # 临时文件目录
 
 # 音频分离配置
 audio_separation:
@@ -24,16 +24,152 @@ audio_merger:
   volume_balance: 0.8        # 人声音量比例
   fade_duration: 0.1         # 淡入淡出时长
 
+# Whisper语音识别配置
+whisper:
+  backend: "faster-whisper"  # 后端选择: "whisper" 或 "faster-whisper"
+  model_size: "medium"       # 模型大小: tiny, base, small, medium, large, large-v2, large-v3
+  language: "auto"           # 语言检测: auto 或具体语言代码
+  task: "transcribe"         # 任务类型: transcribe 或 translate
+  device: "cuda"             # 设备: auto, cpu, cuda
+  fp16: false                # 启用FP16精度加速 (true/false) - 可提升1.5-2倍速度，需要GPU支持
+  use_llm_optimization: true # 启用LLM分段优化
+  
+  # Faster-Whisper 专用参数（改善分段质量）
+  faster_whisper_params:
+    beam_size: 5                      # 束搜索大小，提高准确性（短音频将自动降到1-3）
+    condition_on_previous_text: false # 关闭跨段上下文，防止跨任务残留偏置
+    compression_ratio_threshold: 2.4  # 压缩比阈值（默认2.4）
+    log_prob_threshold: -0.8          # 对数概率阈值（提高阈值，更严格）
+    no_speech_threshold: 0.6          # 无语音阈值（默认0.6）
+    vad_filter: true                  # 启用VAD过滤
+    vad_parameters:
+      min_silence_duration_ms: 800    # VAD最小静音时长（增加到800ms）
+  
+  # 分段优化配置
+  segmentation:
+    method: "semantic"  # 分段方法: "punctuation" 或 "semantic"
+    # punctuation: 基于标点符号的分段优化
+    # semantic: 基于标点符号的语义完整分段（推荐）
+    min_segment_duration: 1.5  # 最小分段时长（秒）
+    max_segment_duration: 15.0  # 最大分段时长（秒）
+    
+    # 标点符号分段参数
+    punctuation:
+      marks: [".", "!", "?", "。", "！", "？"]  # 分段标点符号
+      min_segment_length: 20   # 最小分段字符数
+      max_segment_length: 200  # 最大分段字符数
+
+# 说话人分离配置
+speaker_diarization:
+  model: "pyannote/speaker-diarization-3.1"  # 分离模型
+  min_speakers: 2            # 最少说话者数量
+  max_speakers: 4            # 最多说话者数量
+  device: "cuda"             # 设备: cpu, cuda
+
+# 按人音轨配置（步骤3）
+speaker_tracks:
+  enabled: true
+  compact_concat: true
+  min_gap_merge_ms: 100
+  similarity_merge:
+    enabled: true
+    short_segment_threshold: 2.0  # 短片段时长阈值（秒）
+    similarity_threshold: 0.7      # 相似度阈值（0-1）
+  tse:
+    enabled: true
+    model: "ecapa-tse"
+    frame_ms: 25
+    hop_ms: 10
+    temperature: 3.0
+    threshold: 0.2
+    smoothing_ms: 50
+    min_gain_db: -18
+
 # 默认设置
 defaults:
   language: "en"      # 默认语言 (英语)
-  output_dir: "./output"  # 默认输出目录
+  output_dir: "./data/outputs"  # 默认输出目录
   enable_separation: true    # 默认启用音频分离
+
+# 文本翻译配置
+translation:
+  source_language: "zh"
+  target_language: "en"
+  model: "qwen3-max-2025-09-23"  # 支持的其他选项: qwen-plus, qwen-max, qwen-turbo
+  
+  # 重试策略配置
+  retry_strategy: "adaptive"  # "simple" 或 "adaptive"，默认 "adaptive"
+  max_batch_size: 20         # 批量翻译时一次最多处理的段落数
+  max_retries: 3              # 简单重试策略的最大重试次数
+  single_segment_retries: 3   # 单段落重试的最大次数（自适应策略用）
+  
+  # 内容验证配置
+  enable_content_validation: true  # 启用内容验证（默认: true）
+  snippet_similarity_threshold: 0.7  # snippet 相似度阈值（默认: 0.7）
+
+# 音色克隆配置
+voice_cloning:
+  model_path: "./index-tts"  # IndexTTS2模型目录（相对于项目根目录）
+  # 注意：device 配置已移除，IndexTTS2 会自动检测并使用可用的设备（CUDA/CPU）
+  sample_rate: 16000
+  max_text_tokens: 600
+  max_mel_tokens: 1815
+  
+  # 并行克隆配置
+  enable_parallel: false  # 由于使用锁保护GPU访问，实际是串行处理，直接禁用并行避免线程开销
+  max_parallel_workers: 1  # 串行处理
+
+# 音频合成配置
+audio_synthesis:
+  sample_rate: 16000
+  volume_balance: 0.8
+  fade_duration: 0.1
+  noise_reduction: true
+  audio_quality: "high"
+
+# 视频输出配置
+video_output:
+  video_codec: "libx264"
+  audio_codec: "aac"
+  video_quality: "high"
+  audio_quality: "high"
+  resolution: "1920x1080"
+  frame_rate: 30
+  bitrate: "5000k"
+
+# 多说话者处理配置
+multi_speaker_processing:
+  enable_translation: true
+  enable_voice_cloning: true
+  enable_audio_synthesis: true
+  enable_video_output: true
+  # 原始整段音频路径（用于说话人切分）
+  # original_audio_path: ""  # 已废弃，不再使用
+
+# 输出管理配置
+output:
+  base_dir: "./data/outputs"
+  task_dir_format: "{timestamp}_{filename}"  # 任务目录命名格式
+  timestamp_format: "%Y-%m-%d_%H-%M-%S"     # 时间戳格式: YYYY-MM-DD_HH-MM-SS
+  keep_intermediate_files: true              # 保留所有中间文件
+  save_webui_log: true                       # 保存Web UI日志
 
 # 日志配置
 logging:
   level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  log_dir: "./data/logs"                     # 日志目录
+  enable_file: false                          # 关闭全局文件日志（避免生成 media_processor_*.log）
+
+# 统计配置
+stats:
+  stats_dir: "./data/stats"                  # 统计目录
+
+# GPU监控配置
+gpu_monitor:
+  enable: true
+  log_interval: 10
+  safety_margin_gb: 5.0
 
 
 

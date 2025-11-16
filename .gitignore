@@ -1,135 +1,93 @@
-# Python
+# 数据目录（统一管理）- 忽略整个 data/ 目录及其所有内容
+data/
+
+# 输出目录
+output/
+logs/
+temp/
+stats/
+
+# Python缓存
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
+*.pyc
+*.pyo
+*.pyd
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
+*.so
 
-# PyInstaller
-*.manifest
-*.spec
+# 虚拟环境
+.venv/
+venv/
+env/
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
+# IDE文件
+.vscode/
+.idea/
+.cursor/
+*.swp
+*.swo
 
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-.hypothesis/
-.pytest_cache/
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 测试文件
+test_*.py
+*_test.py
+
+# 模型下载缓存
+.cache/
+cache/
+
+# IndexTTS2输出
+index-tts/output/
+index-tts/outputs/
+index-tts/*.wav
+index-tts/*.log
+
+# 预训练模型和权重文件
+pretrained_models/
+*.pth
+*.pt
+*.bin
+*.safetensors
+*.ckpt
+*.h5
+*.pkl
+*.model
+*.weights
+
+# IndexTTS2模型文件
+index-tts/checkpoints/
+index-tts/models/
+index-tts/assets/
+
+# 环境变量和配置文件（包含敏感信息）
+.env
+.env.local
+*.key
+*.secret
+
+# 临时文件和日志
+*.tmp
+*.temp
+*.log
+*.log.*
 
 # Jupyter Notebook
 .ipynb_checkpoints
+*.ipynb
 
-# IPython
-profile_default/
-ipython_config.py
-
-# pyenv
-.python-version
-
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS generated files
+# 操作系统特定文件
 .DS_Store
 .DS_Store?
 ._*
 .Spotlight-V100
 .Trashes
 ehthumbs.db
-Thumbs.db
+Desktop.ini
 
-# Logs
-*.log
-logs/
-
-# Output directories (项目特定的输出文件)
-output/
-pretrained_models/
-index-tts/
-examples/
-tests/
-
-# Example files
-example_usage.py
-example.ipynb
-
-# Temporary files
-*.tmp
-*.temp
-temp/
-tmp/
-
-# Audio/Video processing temporary files
-*.wav.tmp
-*.mp4.tmp
-*.avi.tmp
-*.mov.tmp
-
-# Model checkpoints and large files
-*.pth
-*.pt
-*.ckpt
-*.bin
-*.safetensors
-
-# Data files
-*.csv
-*.json
-*.pkl
-*.pickle
-
-# Configuration files with sensitive data
-config_local.yaml
-secrets.yaml
-.secrets
-
-# Backup files
+# 备份文件
 *.bak
 *.backup
 *~
-
-# Node modules (if any)
-node_modules/
-
-# Cache directories
-.cache/
-cache/

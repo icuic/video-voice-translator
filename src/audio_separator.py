@@ -1,16 +1,16 @@
 """
 音频分离器模块
-使用Spleeter进行人声和背景音乐的分离
+使用Demucs进行人声和背景音乐的分离
 """
 
 import os
+import sys
 import logging
 import numpy as np
 import librosa
+import subprocess
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
-from spleeter.separator import Separator
-from spleeter.audio.adapter import AudioAdapter
 from .utils import validate_file_path, create_output_dir, safe_filename
 
 
@@ -27,20 +27,25 @@ class AudioSeparator:
         self.config = config
         self.logger = logging.getLogger(__name__)
         
-        # 初始化Spleeter分离器
+        # 初始化Demucs分离器
         try:
-            # 使用2stems模型（人声+伴奏）
-            self.separator = Separator('spleeter:2stems-16kHz')
-            self.audio_adapter = AudioAdapter.default()
-            self.logger.info("Spleeter分离器初始化成功")
+            # 使用htdemucs模型（更好的分离效果）
+            self.model_name = "htdemucs"
+            self.logger.info("Demucs分离器初始化成功")
         except Exception as e:
-            self.logger.error(f"Spleeter初始化失败: {e}")
+            self.logger.error(f"Demucs初始化失败: {e}")
             raise
         
-        # 分离配置
+        # 分离配置 - 提取为类属性，支持配置覆盖
         self.separation_config = config.get("audio_separation", {})
         self.enable_gpu = self.separation_config.get("enable_gpu", True)
         self.quality_threshold = self.separation_config.get("quality_threshold", 0.3)
+        
+        # 其他可配置参数
+        self.spectral_centroid_weight = self.separation_config.get("spectral_centroid_weight", 0.4)
+        self.spectral_bandwidth_weight = self.separation_config.get("spectral_bandwidth_weight", 0.3)
+        self.mfcc_variance_weight = self.separation_config.get("mfcc_variance_weight", 0.3)
+        self.energy_ratio_threshold = self.separation_config.get("energy_ratio_threshold", 10.0)
     
     def detect_background_music(self, audio_path: str) -> Dict[str, Any]:
         """
@@ -81,13 +86,15 @@ class AudioSeparator:
             self.logger.error(f"背景音乐检测失败: {e}")
             raise
     
-    def separate_audio(self, audio_path: str, output_dir: str) -> Dict[str, Any]:
+    
+    def separate_audio_with_paths(self, audio_path: str, vocals_path: str, accompaniment_path: str) -> Dict[str, Any]:
         """
-        分离音频为人声和背景音乐
+        分离音频到指定路径
         
         Args:
             audio_path: 输入音频文件路径
-            output_dir: 输出目录
+            vocals_path: 人声输出路径
+            accompaniment_path: 背景音乐输出路径
             
         Returns:
             分离结果字典
@@ -95,30 +102,58 @@ class AudioSeparator:
         if not validate_file_path(audio_path):
             raise FileNotFoundError(f"音频文件不存在: {audio_path}")
         
-        self.logger.info(f"开始音频分离: {audio_path}")
+        self.logger.info(f"开始音频分离到指定路径: {audio_path}")
         
         # 创建输出目录
-        create_output_dir(output_dir)
+        os.makedirs(os.path.dirname(vocals_path), exist_ok=True)
+        os.makedirs(os.path.dirname(accompaniment_path), exist_ok=True)
         
         try:
-            # 生成输出文件名
+            # 生成临时输出目录
+            temp_output_dir = os.path.join(os.path.dirname(vocals_path), "temp_separation")
+            os.makedirs(temp_output_dir, exist_ok=True)
+            
+            # 执行Demucs分离
             input_name = Path(audio_path).stem
             safe_name = safe_filename(input_name)
+            self._run_demucs_separation(audio_path, temp_output_dir, safe_name)
             
-            # 执行分离
-            self.separator.separate_to_file(
-                audio_path,
-                output_dir,
-                filename_format=f"{safe_name}_{{instrument}}.wav"
-            )
+            # 查找分离后的文件
+            # Demucs 生成的目录名可能不是基于输入文件名，需要动态查找
+            htdemucs_dir = os.path.join(temp_output_dir, "htdemucs")
+            demucs_output_dir = None
             
-            # 生成输出文件路径
-            vocals_path = os.path.join(output_dir, f"{safe_name}_vocals.wav")
-            accompaniment_path = os.path.join(output_dir, f"{safe_name}_accompaniment.wav")
+            # 查找实际的输出目录
+            if os.path.exists(htdemucs_dir):
+                for item in os.listdir(htdemucs_dir):
+                    item_path = os.path.join(htdemucs_dir, item)
+                    if os.path.isdir(item_path):
+                        # 检查是否包含 vocals.wav 和 no_vocals.wav
+                        vocals_file = os.path.join(item_path, "vocals.wav")
+                        accompaniment_file = os.path.join(item_path, "no_vocals.wav")
+                        if os.path.exists(vocals_file) and os.path.exists(accompaniment_file):
+                            demucs_output_dir = item_path
+                            break
             
-            # 验证输出文件
-            if not os.path.exists(vocals_path) or not os.path.exists(accompaniment_path):
-                raise RuntimeError("音频分离失败，输出文件未生成")
+            if demucs_output_dir:
+                temp_vocals = os.path.join(demucs_output_dir, "vocals.wav")
+                temp_accompaniment = os.path.join(demucs_output_dir, "no_vocals.wav")
+            else:
+                # 如果htdemucs目录中不存在，检查根目录
+                temp_vocals = os.path.join(temp_output_dir, f"{safe_name}_vocals.wav")
+                temp_accompaniment = os.path.join(temp_output_dir, f"{safe_name}_accompaniment.wav")
+            
+            # 验证临时文件
+            if not os.path.exists(temp_vocals) or not os.path.exists(temp_accompaniment):
+                raise RuntimeError("音频分离失败，临时文件未生成")
+            
+            # 复制到目标路径
+            import shutil
+            shutil.copy2(temp_vocals, vocals_path)
+            shutil.copy2(temp_accompaniment, accompaniment_path)
+            
+            # 清理临时目录
+            shutil.rmtree(temp_output_dir, ignore_errors=True)
             
             # 获取文件信息
             vocals_size = os.path.getsize(vocals_path)
@@ -127,7 +162,6 @@ class AudioSeparator:
             result = {
                 "success": True,
                 "input_path": audio_path,
-                "output_dir": output_dir,
                 "vocals_path": vocals_path,
                 "accompaniment_path": accompaniment_path,
                 "vocals_size": vocals_size,
@@ -158,8 +192,13 @@ class AudioSeparator:
         if progress_callback:
             progress_callback(0.0, "开始音频分离...")
         
+        # 生成输出文件路径
+        base_name = os.path.splitext(os.path.basename(audio_path))[0]
+        vocals_path = os.path.join(output_dir, f"{base_name}_vocals.wav")
+        accompaniment_path = os.path.join(output_dir, f"{base_name}_accompaniment.wav")
+        
         # 执行分离
-        result = self.separate_audio(audio_path, output_dir)
+        result = self.separate_audio_with_paths(audio_path, vocals_path, accompaniment_path)
         
         if progress_callback:
             progress_callback(100.0, "音频分离完成")
@@ -230,11 +269,11 @@ class AudioSeparator:
         # MFCC方差大表示音色变化丰富，可能有音乐
         mfcc_variance = features["mfcc_variance"]
         
-        # 综合判断
+        # 综合判断 - 使用配置参数
         music_score = (
-            min(spectral_centroid_std / 1000, 1.0) * 0.4 +
-            min(spectral_bandwidth_std / 1000, 1.0) * 0.3 +
-            min(mfcc_variance / 100, 1.0) * 0.3
+            min(spectral_centroid_std / 1000, 1.0) * self.spectral_centroid_weight +
+            min(spectral_bandwidth_std / 1000, 1.0) * self.spectral_bandwidth_weight +
+            min(mfcc_variance / 100, 1.0) * self.mfcc_variance_weight
         )
         
         has_background = music_score > self.quality_threshold
@@ -292,8 +331,8 @@ class AudioSeparator:
             else:
                 energy_ratio = float('inf')
             
-            # 计算分离质量分数
-            quality_score = min(energy_ratio / 10, 1.0)  # 归一化到0-1
+            # 计算分离质量分数 - 使用配置参数
+            quality_score = min(energy_ratio / self.energy_ratio_threshold, 1.0)  # 归一化到0-1
             
             return {
                 "quality_score": quality_score,
@@ -310,3 +349,54 @@ class AudioSeparator:
                 "energy_ratio": 1.0,
                 "recommendation": "无法评估分离质量"
             }
+    
+    def _run_demucs_separation(self, audio_path: str, output_dir: str, safe_name: str):
+        """
+        运行Demucs分离
+        
+        Args:
+            audio_path: 输入音频文件路径
+            output_dir: 输出目录
+            safe_name: 安全的文件名
+        """
+        try:
+            # 清理GPU缓存，为Demucs释放内存
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                self.logger.info("已清理GPU缓存，为Demucs释放内存")
+            
+            # 构建Demucs命令 - 使用当前Python解释器
+            cmd = [
+                sys.executable, "-m", "demucs",
+                "--two-stems", "vocals",
+                "-o", output_dir,
+                audio_path
+            ]
+            
+            self.logger.info(f"执行Demucs分离: {' '.join(cmd)}")
+            
+            # 执行命令
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            
+            self.logger.info("Demucs分离完成")
+            
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Demucs分离失败: {e}")
+            self.logger.error(f"错误输出: {e.stderr}")
+            raise RuntimeError(f"Demucs分离失败: {e.stderr}")
+        except Exception as e:
+            self.logger.error(f"Demucs分离过程中出现异常: {e}")
+            raise
+    
+    def clear_gpu_cache(self):
+        """
+        清理GPU缓存
+        """
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                self.logger.info("GPU缓存清理完成")
+        except Exception as e:
+            self.logger.warning(f"GPU缓存清理失败: {e}")
