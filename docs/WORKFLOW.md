@@ -8,7 +8,7 @@
 - Whisper / Faster-Whisper (语音识别)
 - Demucs (音频分离)
 - PyAnnote (多说话人分离)
-- Qwen-Flash (文本翻译)
+- Qwen系列 (文本翻译，默认qwen3-max-2025-09-23)
 - IndexTTS2 (音色克隆)
 - FFmpeg (音视频处理)
 
@@ -304,10 +304,10 @@
 
 **处理内容**:
 1. **智能跳过**: 如果源语言 = 目标语言，跳过翻译
-2. **批量翻译**: 使用 Qwen-Flash 大模型批量翻译
-   - 每批 100 个分段
+2. **批量翻译**: 使用 Qwen 系列大模型批量翻译（默认qwen3-max-2025-09-23）
+   - 每批最多 20 个分段（可配置）
    - 确保翻译结果数量与输入一致
-   - 自动重试机制（最多 3 次）
+   - 自动重试机制（自适应策略）
 3. 为每个分段添加 `translated_text` 字段
 
 **输出文件**:
@@ -505,9 +505,74 @@ ffmpeg -i 原视频 -i 中文配音 \
 
 ---
 
-## 完整目录结构示例
+## 输出文件汇总
 
-处理完成后，任务目录结构如下：
+处理完成后，系统会在输出目录中按任务创建独立目录（格式：`时间戳_文件名`），并生成以下文件：
+
+### 步骤 1：音频提取
+
+- `<文件名>_01_audio.wav` - 提取的原始音频（16kHz，单声道）
+
+### 步骤 2：音频分离
+
+- `<文件名>_02_vocals.wav` - 分离后的人声轨道
+- `<文件名>_02_accompaniment.wav` - 背景音乐轨道（如果存在）
+
+### 步骤 3：多说话人处理（如果启用）
+
+- `speakers/<speaker_id>/<speaker_id>.wav` - 各说话人的紧凑音轨
+- `speakers/<speaker_id>/<speaker_id>.json` - 时间映射表（全局时间 ↔ 紧凑时间）
+
+### 步骤 4：语音识别
+
+**主任务目录**（合并后的结果，全局时间）：
+- `<文件名>_04_whisper_raw_transcription.txt` - 完整转录文本
+- `<文件名>_04_whisper_raw_word_timestamps.txt` - 单词级时间戳（调试用）
+- `<文件名>_04_whisper_raw_segments.txt` - Whisper 原始分段文本（可读格式，调试用）
+- `<文件名>_04_segments.txt` - 分段文本
+- `<文件名>_04_segments.json` - 分段数据（JSON格式，包含时间戳和文本）
+- `<文件名>_04_whisper_raw.json` - Whisper 原始输出（调试用）
+
+**多说话人场景 - speakers目录**（各说话人的原始结果，紧凑时间）：
+- `speakers/<speaker_id>/<speaker_id>_04_whisper_raw.json` - 说话人的 Whisper 原始输出（紧凑时间）
+- `speakers/<speaker_id>/<speaker_id>_04_whisper_raw_segments.txt` - 说话人的 Whisper 原始分段文本（紧凑时间）
+- `speakers/<speaker_id>/<speaker_id>_04_whisper_raw_transcription.txt` - 说话人的转录文本（紧凑时间）
+- `speakers/<speaker_id>/<speaker_id>_04_whisper_raw_word_timestamps.txt` - 说话人的单词级时间戳（紧凑时间）
+
+**注意**：多说话人场景下，speakers 目录中的文件使用**紧凑时间**，主任务目录中的文件使用**全局时间**。
+
+### 步骤 5：文本翻译
+
+- `<文件名>_05_translation.txt` - 翻译结果（带时间戳）
+- `<文件名>_05_llm_interaction.txt` - LLM 交互记录（调试用）
+
+### 步骤 6：参考音频提取
+
+- `ref_audio/<文件名>_06_ref_segment_000.wav` - 片段0的参考音频
+- `ref_audio/<文件名>_06_ref_segment_001.wav` - 片段1的参考音频
+- `ref_audio/<文件名>_06_ref_segment_*.wav` - 其他片段的参考音频
+
+### 步骤 7：音色克隆
+
+- `cloned_audio/<文件名>_07_segment_000.wav` - 片段0的克隆音频
+- `cloned_audio/<文件名>_07_segment_001.wav` - 片段1的克隆音频
+- `cloned_audio/<文件名>_07_segment_*.wav` - 其他片段的克隆音频
+
+### 步骤 8：音频合并
+
+- `<文件名>_08_final_voice.wav` - 完整的翻译配音轨道
+
+### 步骤 9：视频合成
+
+- `<文件名>_09_translated.mp4` - 最终翻译视频
+
+### 其他文件
+
+- `processing_log.txt` - 处理日志
+- `translation_stats.json` - 性能统计（JSON格式）
+- `translation_stats.csv` - 性能统计（CSV格式）
+
+### 完整目录结构示例
 
 ```
 data/outputs/
@@ -517,17 +582,17 @@ data/outputs/
     ├── input_video_02_accompaniment.wav      # 步骤2: 背景音乐（可选）
     │
     ├── speakers/                             # 步骤3: 多说话人处理（可选）
-    │   ├── SPEAKER_00.wav
-    │   └── SPEAKER_01.wav
-    ├── maps/                                 # 步骤3: 时间映射表（可选）
-    │   ├── SPEAKER_00.json
-    │   └── SPEAKER_01.json
+    │   ├── SPEAKER_00/
+    │   │   ├── SPEAKER_00.wav
+    │   │   └── SPEAKER_00.json
+    │   └── SPEAKER_01/
+    │       ├── SPEAKER_01.wav
+    │       └── SPEAKER_01.json
     │
     ├── input_video_04_whisper_raw_transcription.txt      # 步骤4: 完整转录文本
     ├── input_video_04_whisper_raw_word_timestamps.txt    # 步骤4: 单词级时间戳
     ├── input_video_04_segments.txt           # 步骤4: 分段文本
     ├── input_video_04_segments.json          # 步骤4: 分段数据（JSON）
-    ├── input_video_04_whisper_raw.json       # 步骤4: Whisper原始输出
     │
     ├── input_video_05_translation.txt        # 步骤5: 翻译结果
     ├── input_video_05_llm_interaction.txt    # 步骤5: LLM交互记录
@@ -537,7 +602,7 @@ data/outputs/
     │   ├── input_video_06_ref_segment_001.wav
     │   └── ...
     │
-    ├── cloned_audio/                         # 步骤7: 克隆音频
+    ├── cloned_audio/                          # 步骤7: 克隆音频
     │   ├── input_video_07_segment_000.wav
     │   ├── input_video_07_segment_001.wav
     │   └── ...
@@ -552,44 +617,4 @@ data/outputs/
 
 ---
 
-## 关键设计要点
-
-### 1. 步骤职责分离
-- **步骤3**: 只负责音频处理（说话人分离和紧凑音轨生成），**不包含ASR**
-- **步骤4**: 统一ASR处理，无论是单说话人还是多说话人场景，都生成统一的 `04_segments.json`
-
-### 2. 文件存放位置
-- **所有步骤6和7的文件都在主任务目录**：
-  - `ref_audio/` - 参考音频（步骤6）
-  - `cloned_audio/` - 克隆音频（步骤7）
-- **不会**在说话人子目录中创建这些目录
-
-### 3. 多说话人处理
-- 步骤3生成说话人紧凑音轨和时间映射表
-- 步骤4对每个说话人分别进行ASR，然后合并结果
-- 步骤6优先使用说话人紧凑音轨提取参考音频，以获得更准确的结果
-
-### 4. 统一数据格式
-- `04_segments.json` 始终保存在主任务目录
-- 多说话人场景下，segments 包含 `speaker_id` 字段
-- 所有 segments 按全局时间排序
-
----
-
-## 性能优化特性
-
-1. **模型预加载**: 启动时预加载模型，避免首次使用延迟
-2. **批量处理**: 文本翻译采用批量处理（每批100个分段）
-3. **GPU加速**: Whisper/Faster-Whisper 和 IndexTTS2 支持 CUDA 加速
-4. **FP16精度**: IndexTTS2 使用半精度浮点数，提升速度并减少显存占用
-5. **并行处理**: 音色克隆支持并行处理多个片段
-6. **Faster-Whisper后端**: 默认使用 Faster-Whisper（基于 CTranslate2），比原生 Whisper 更快
-7. **VAD过滤**: Faster-Whisper 支持语音活动检测（VAD），过滤静音段，提升识别效率
-8. **智能重试**: 文本翻译采用自适应重试策略，提高成功率
-
----
-
-## 总结
-
-本系统实现了一个完整的9步骤音视频翻译流程，从原始视频/音频输入到最终翻译视频输出，每个步骤都有明确的输入、输出和处理逻辑。系统支持单说话人和多说话人场景，通过统一的数据格式和清晰的职责分离，确保了处理流程的可靠性和可维护性。
 

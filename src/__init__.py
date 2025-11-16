@@ -4,7 +4,7 @@
 """
 
 __version__ = "1.0.0"
-__author__ = "Voice Clone Lingua Shift Team"
+__author__ = "Video Voice Translator Team"
 
 
 

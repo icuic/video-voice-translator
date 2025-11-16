@@ -1,6 +1,6 @@
 # 贡献指南
 
-感谢您对 Voice Clone Lingua Shift 项目的关注！我们欢迎所有形式的贡献。
+感谢您对 Video Voice Translator 项目的关注！我们欢迎所有形式的贡献。
 
 ## 如何贡献
 
@@ -24,8 +24,8 @@
 
 2. **克隆仓库**：
    ```bash
-   git clone https://github.com/YOUR_USERNAME/voice_clone_lingua_shift.git
-   cd voice_clone_lingua_shift
+   git clone https://github.com/YOUR_USERNAME/video_voice_translator.git
+   cd video_voice_translator
    ```
    注意：将 `YOUR_USERNAME` 替换为您的 GitHub 用户名
 
@@ -145,18 +145,7 @@ docs: 更新安装指南
 
 ### 项目结构
 
-了解项目结构有助于更好地贡献：
-
-```
-voice_clone_lingua_shift/
-├── src/                    # 源代码目录
-├── index-tts/              # IndexTTS2 子模块
-├── tools/                  # 工具脚本
-├── scripts/                # 安装和批处理脚本
-├── docs/                   # 文档目录
-├── config.yaml            # 配置文件
-└── requirements_project.txt  # 主项目依赖
-```
+了解项目结构有助于更好地贡献。详细项目结构请参考：[README.md - 项目结构](../README.md#项目结构)
 
 ### 获取帮助
 
