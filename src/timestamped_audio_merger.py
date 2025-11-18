@@ -389,6 +389,15 @@ class TimestampedAudioMerger:
                         padded_audio = audio_data
                         self.logger.info(f"  ✅ 直接使用实际音频: {len(audio_data)/actual_sample_rate:.3f}s")
                     
+                    # 对所有音频片段应用末尾淡出，消除数字伪影（额外保护）
+                    fade_out_duration = 0.02  # 20ms淡出
+                    fade_out_samples = int(fade_out_duration * actual_sample_rate)
+                    if len(padded_audio) > fade_out_samples:
+                        fade_out_start = len(padded_audio) - fade_out_samples
+                        fade_curve = np.linspace(1.0, 0.0, fade_out_samples)
+                        padded_audio[fade_out_start:] *= fade_curve
+                        self.logger.info(f"  ✅ 已应用末尾淡出: {fade_out_duration*1000:.0f}ms")
+                    
                     # 检查是否与之前的音频重叠
                     if start_sample < len(audio_track):
                         existing_audio = audio_track[start_sample:end_sample]
@@ -781,12 +790,49 @@ class TimestampedAudioMerger:
                 self.logger.warning(f"无法获取音频时长: {audio_path}")
                 return False
             
-            # 如果实际时长 <= 目标时长，直接复制
+            # 如果实际时长 <= 目标时长，应用淡出效果后复制（消除数字伪影）
             if actual_duration <= target_duration:
-                import shutil
-                shutil.copy2(audio_path, output_path)
-                self.logger.info(f"音频时长合适 ({actual_duration:.2f}s <= {target_duration:.2f}s)，直接复制")
-                return True
+                # 对所有音频都应用末尾淡出，消除数字伪影
+                fade_out_duration = 0.02  # 20ms淡出
+                fade_start_time = max(0, actual_duration - fade_out_duration)
+                
+                # 使用FFmpeg添加淡出效果
+                import tempfile
+                temp_dir = tempfile.mkdtemp()
+                try:
+                    final_output = os.path.join(temp_dir, "final_with_fade.wav")
+                    cmd_fade = [
+                        'ffmpeg',
+                        '-i', audio_path,
+                        '-af', f'afade=t=out:st={fade_start_time:.3f}:d={fade_out_duration:.3f}',
+                        '-y', final_output
+                    ]
+                    
+                    result_fade = subprocess.run(cmd_fade, capture_output=True, text=True)
+                    
+                    if result_fade.returncode == 0:
+                        import shutil
+                        shutil.copy2(final_output, output_path)
+                        self.logger.info(f"音频时长合适 ({actual_duration:.2f}s <= {target_duration:.2f}s)，已应用末尾淡出: {fade_out_duration*1000:.0f}ms")
+                    else:
+                        # 如果淡出处理失败，直接复制（降级处理）
+                        self.logger.warning(f"淡出处理失败，直接复制: {result_fade.stderr}")
+                        import shutil
+                        shutil.copy2(audio_path, output_path)
+                    
+                    # 清理临时文件
+                    import shutil
+                    shutil.rmtree(temp_dir)
+                    return True
+                except Exception as e:
+                    self.logger.warning(f"淡出处理异常，直接复制: {e}")
+                    import shutil
+                    if os.path.exists(temp_dir):
+                        shutil.rmtree(temp_dir)
+                    # 降级处理：直接复制
+                    import shutil
+                    shutil.copy2(audio_path, output_path)
+                    return True
             
             # 如果实际时长 > 目标时长，进行时间压缩
             # 让倍速比计算得到的倍速大一点，确保不超出分段时间戳
