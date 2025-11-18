@@ -80,7 +80,21 @@ cd ..
 
 ### 安装主项目依赖
 
-**说明**：完成 IndexTTS2 安装后，需要安装主项目的额外依赖。主项目的依赖文件是 `requirements_project.txt`，包含 IndexTTS2 中没有的依赖（如 whisper、pyannote 等）。
+**说明**：完成 IndexTTS2 安装后，需要安装主项目的额外依赖。主项目的依赖文件是 `requirements_project.txt`，包含 IndexTTS2 中没有的依赖（如 faster-whisper、openai-whisper、pyannote 等）。
+
+**重要提示**：
+- 默认使用 **faster-whisper** 作为语音识别后端（基于 CTranslate2，速度更快）
+- 同时也安装 **openai-whisper** 作为备选后端（基于 PyTorch）
+- 可以在 `config.yaml` 中通过 `whisper.backend` 配置项切换后端
+
+**主要依赖说明**：
+- **faster-whisper** / **openai-whisper**：语音识别引擎
+- **openai**：用于调用阿里云 DashScope API（Qwen 模型）进行文本翻译
+- **resemblyzer**：用于说话人分离的语音编码器
+- **ninja**：用于编译 IndexTTS2 的 CUDA kernel（加速推理）
+- **pyannote.audio**：说话人分离模型
+- **demucs**：音频分离模型（用于人声和背景音乐分离）
+- **scipy**、**httpx**、**pydub**：其他工具依赖
 
 **安装方式**：提供三种方式，选择其中一种即可：
 - **方式一**：使用 uv 安装（推荐，速度最快）
@@ -105,7 +119,10 @@ uv pip install -r requirements_project.txt
 
 # 3. 验证安装
 python tools/check_dependencies.py
-# 或使用快速验证
+# 或使用快速验证（根据配置的后端选择）
+# 如果使用 faster-whisper（默认）:
+python -c "import gradio; import faster_whisper; import scipy; print('依赖安装成功')"
+# 如果使用 openai-whisper:
 python -c "import gradio; import whisper; import scipy; print('依赖安装成功')"
 ```
 
@@ -199,26 +216,6 @@ export HF_ENDPOINT="https://hf-mirror.com"
 ```
 
 启动脚本会自动读取此配置。
-
-### Demucs 模块安装
-
-虽然 `demucs` 在 index-tts 的依赖列表中，但实际安装时可能需要单独安装。
-
-**如果遇到 `No module named 'demucs'` 错误**：
-
-```bash
-cd index-tts
-source .venv/bin/activate
-python -m pip install demucs -i http://mirrors.tencentyun.com/pypi/simple --trusted-host mirrors.tencentyun.com
-```
-
-**验证安装**：
-
-```bash
-python -m demucs --help
-```
-
-如果命令能正常显示帮助信息，说明安装成功。
 
 ## 下一步
 

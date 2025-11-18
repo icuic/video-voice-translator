@@ -9,6 +9,8 @@ import logging
 import numpy as np
 import librosa
 import subprocess
+import re
+import time
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 from .utils import validate_file_path, create_output_dir, safe_filename
@@ -375,16 +377,64 @@ class AudioSeparator:
             ]
             
             self.logger.info(f"执行Demucs分离: {' '.join(cmd)}")
+            self.logger.info("提示: 如果是首次运行，Demucs 需要下载模型（约80MB），请耐心等待...")
             
-            # 执行命令
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            # 使用 Popen 实时读取输出，让用户能看到下载进度
+            # 设置环境变量确保输出不被缓冲
+            env = os.environ.copy()
+            env['PYTHONUNBUFFERED'] = '1'
+            
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,  # 合并 stderr 到 stdout
+                text=True,
+                bufsize=0,  # 无缓冲，确保实时输出
+                universal_newlines=True,
+                env=env
+            )
+            
+            # 实时读取并记录输出
+            output_lines = []
+            last_log_time = 0
+            
+            for line in process.stdout:
+                line = line.rstrip()
+                if line:
+                    # 清理 ANSI 转义码（进度条可能使用）
+                    clean_line = re.sub(r'\x1b\[[0-9;]*m', '', line)  # 移除 ANSI 颜色码
+                    clean_line = re.sub(r'\r', '', clean_line)  # 移除回车符
+                    
+                    if clean_line.strip():
+                        # 对于进度条，每0.5秒记录一次，避免日志过多
+                        current_time = time.time()
+                        if 'Downloading' in clean_line or '%' in clean_line or '|' in clean_line:
+                            if current_time - last_log_time > 0.5:
+                                self.logger.info(f"Demucs: {clean_line}")
+                                last_log_time = current_time
+                        else:
+                            # 普通输出立即记录
+                            self.logger.info(f"Demucs: {clean_line}")
+                            last_log_time = current_time
+                        
+                        output_lines.append(clean_line)
+            
+            # 等待进程完成
+            return_code = process.wait()
+            
+            if return_code != 0:
+                error_msg = "\n".join(output_lines[-20:])  # 只显示最后20行错误信息
+                self.logger.error(f"Demucs分离失败，退出码: {return_code}")
+                self.logger.error(f"错误输出: {error_msg}")
+                raise RuntimeError(f"Demucs分离失败: {error_msg}")
             
             self.logger.info("Demucs分离完成")
             
         except subprocess.CalledProcessError as e:
             self.logger.error(f"Demucs分离失败: {e}")
-            self.logger.error(f"错误输出: {e.stderr}")
-            raise RuntimeError(f"Demucs分离失败: {e.stderr}")
+            if hasattr(e, 'stderr') and e.stderr:
+                self.logger.error(f"错误输出: {e.stderr}")
+            raise RuntimeError(f"Demucs分离失败: {e}")
         except Exception as e:
             self.logger.error(f"Demucs分离过程中出现异常: {e}")
             raise

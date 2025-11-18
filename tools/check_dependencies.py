@@ -17,6 +17,7 @@ REQUIRED_DEPENDENCIES = {
     "httpx": "httpx",
     "pydub": "pydub",
     "tiktoken": "tiktoken",
+    "demucs": "demucs",  # 音频分离模型（人声和背景音乐分离）
 }
 
 # index-tts 核心依赖（应该已安装）
@@ -93,8 +94,9 @@ def check_all_dependencies():
             for pkg, error in project_missing:
                 print(f"  - {pkg}")
             
-            print(f"\n安装命令: pip install -r requirements_project.txt")
-            print("\n或使用启动脚本自动安装: ./run_webui.sh")
+            print(f"\n安装命令: uv pip install -r requirements_project.txt")
+            print("或使用便捷脚本: ./scripts/install/install_with_uv.sh")
+            print("或使用启动脚本自动安装: ./run_webui.sh")
         
         return 1
 

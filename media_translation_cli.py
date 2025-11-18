@@ -458,11 +458,22 @@ def translate_media(input_path, source_lang='auto', target_lang='auto', output_d
         # 保存性能统计
         output_manager.save_performance_stats()
         
+        # 获取翻译文件路径（如果存在）
+        translation_file = None
+        try:
+            translation_file_path = output_manager.get_file_path(StepNumbers.STEP_5, "translation")
+            if os.path.exists(translation_file_path):
+                translation_file = translation_file_path
+        except Exception:
+            # 如果获取失败，忽略错误，继续返回其他信息
+            pass
+        
         return {
             "success": True,
             "task_dir": output_manager.task_dir,
             "final_video_path": final_video_path,
-            "total_time": total_time
+            "total_time": total_time,
+            "translation_file": translation_file
         }
         
     except Exception as e:

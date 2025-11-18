@@ -22,16 +22,26 @@
 # 主项目独有依赖（index-tts 中没有的）
 # ============================================
 
-# 语音识别（主项目使用 openai-whisper，index-tts 使用的是 faster-whisper）
-openai-whisper>=20250625
+# 语音识别
+# 注意：默认使用 faster-whisper（更快），openai-whisper 作为备选
+faster-whisper>=1.0.0  # 默认后端，基于 CTranslate2，速度更快
+openai-whisper>=20250625  # 备选后端，基于 PyTorch
 tiktoken>=0.12.0
 
 # 说话人分离
-pyannote.audio>=4.0.0
+# 注意：pyannote.audio 4.0.0+ 需要 numpy>=2.0，但 IndexTTS2 要求 numpy==1.26.2
+# 因此限制为 3.x 版本以保持兼容性
+pyannote.audio>=3.0.0,<4.0.0
 speechbrain>=1.0.3
+resemblyzer>=0.0.1  # 用于说话人分离的语音编码器
 
 # 科学计算（用于音频分析）
 scipy>=1.10.0
+
+# 重要：固定 numpy 版本以兼容 IndexTTS2
+# IndexTTS2 要求 numpy==1.26.2，因为使用了 numpy.bool8（在 numpy 2.0+ 中已移除）
+# 必须放在这里以确保安装主项目依赖时不会升级 numpy
+numpy==1.26.2
 
 # Web UI（如果需要更新版本，index-tts 已包含 gradio==5.45.0）
 # gradio>=4.0.0  # 已在 index-tts optional-dependencies.webui 中
@@ -39,17 +49,24 @@ httpx>=0.24.0
 
 # 音频处理增强
 pydub>=0.25.1
+demucs>=4.0.1  # 音频分离模型（人声和背景音乐分离）
+
+# 文本翻译（DashScope API）
+openai>=1.0.0  # 用于调用阿里云 DashScope API（Qwen 模型）
+
+# 构建工具
+ninja>=1.10.0  # 用于编译 C++ 扩展（IndexTTS2 CUDA kernel 需要）
 
 # ============================================
 # 版本兼容性说明
 # ============================================
 # 注意：以下依赖已在 index-tts/pyproject.toml 中定义，这里仅作参考
 # 不需要重复安装，除非版本冲突：
-# - numpy==1.26.2 (index-tts 已包含)
+# - numpy==1.26.2 (index-tts 已包含，但必须在此处明确固定版本以防止被升级)
 # - librosa==0.10.2.post1 (index-tts 已包含)
 # - soundfile>=0.13.1 (index-tts 已包含，但主项目可能需要特定版本)
 # - ffmpeg-python==0.2.0 (index-tts 已包含)
 # - opencv-python==4.9.0.80 (index-tts 已包含)
-# - demucs>=4.0.1 (index-tts 已包含)
+# - demucs>=4.0.1 (index-tts 未包含，需要在此处安装，用于音频分离功能)
 # - PyYAML (index-tts 通过 omegaconf 管理)
 

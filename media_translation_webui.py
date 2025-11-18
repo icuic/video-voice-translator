@@ -164,30 +164,31 @@ def translate_media_interface(
             if progress:
                 progress(1.0, desc="翻译完成!")
             task_dir = result.get("task_dir")
+            translation_file = result.get("translation_file")
             final_video_path = result.get("final_video_path")
             final_audio_path = result.get("final_audio_path")
             total_time = result.get("total_time")
             time_text = f"耗时: {total_time:.1f}秒" if isinstance(total_time, (int, float)) else ""
             if input_mode == "视频":
                 if final_video_path and os.path.exists(final_video_path):
-                    return final_video_path, None, f"翻译完成！{time_text}", None, None, None
+                    return final_video_path, None, f"翻译完成！{time_text}", task_dir, translation_file, None
                 if task_dir:
                     candidate = os.path.join(task_dir, "09_translated.mp4")
                     if os.path.exists(candidate):
-                        return candidate, None, f"翻译完成！{time_text}", None, None, None
+                        return candidate, None, f"翻译完成！{time_text}", task_dir, translation_file, None
                     video_files = sorted(glob.glob(os.path.join(task_dir, "*.mp4")), key=os.path.getmtime, reverse=True)
                     if video_files:
-                        return video_files[0], None, f"翻译完成！{time_text}", None, None, None
+                        return video_files[0], None, f"翻译完成！{time_text}", task_dir, translation_file, None
                 input_filename = os.path.basename(input_media_path)
                 base_name = os.path.splitext(input_filename)[0]
                 expected_output_file = f"{base_name}_translated.mp4"
                 expected_output_path = os.path.join(cmd_args.output_dir, expected_output_file)
                 if os.path.exists(expected_output_path):
-                    return expected_output_path, None, f"翻译完成！{time_text}", None, None, None
-                return None, None, "翻译完成，但未找到生成的视频文件", None, None, None
+                    return expected_output_path, None, f"翻译完成！{time_text}", task_dir, translation_file, None
+                return None, None, "翻译完成，但未找到生成的视频文件", task_dir, translation_file, None
             # 音频模式
             if final_audio_path and os.path.exists(final_audio_path):
-                return None, final_audio_path, f"翻译完成！{time_text}", None, None, None
+                return None, final_audio_path, f"翻译完成！{time_text}", task_dir, translation_file, None
             def find_audio_in_dir(directory: str):
                 if not directory or not os.path.isdir(directory):
                     return None
@@ -203,7 +204,7 @@ def translate_media_interface(
                 return None
             audio_path = find_audio_in_dir(task_dir) if task_dir else None
             if audio_path and os.path.exists(audio_path):
-                return None, audio_path, f"翻译完成！{time_text}", None, None, None
+                return None, audio_path, f"翻译完成！{time_text}", task_dir, translation_file, None
             try:
                 subdirs = [os.path.join(cmd_args.output_dir, d) for d in os.listdir(cmd_args.output_dir)]
                 subdirs = [d for d in subdirs if os.path.isdir(d)]
@@ -211,10 +212,10 @@ def translate_media_interface(
                 for d in subdirs:
                     audio_path = find_audio_in_dir(d)
                     if audio_path and os.path.exists(audio_path):
-                        return None, audio_path, f"翻译完成！{time_text}", None, None, None
+                        return None, audio_path, f"翻译完成！{time_text}", task_dir, translation_file, None
             except Exception:
                 pass
-                return None, None, "翻译完成，但未找到生成的音频文件", None, None, None
+                return None, None, "翻译完成，但未找到生成的音频文件", task_dir, translation_file, None
         else:
             return None, None, "翻译失败，请检查输入文件", None, None, None
     except Exception as e:
@@ -793,18 +794,17 @@ def create_interface():
         
         def load_translation_for_editing(task_dir_val, translation_file_val):
             """加载翻译文件用于编辑"""
-            import time
-            start_time = time.time()
-            logger.info(f"[load_translation_for_editing] 开始加载翻译文件，task_dir: {task_dir_val}, translation_file: {translation_file_val}")
-            
+            # 如果参数为 None，说明不需要编辑，直接静默返回（这是正常情况，不需要记录警告）
             if not task_dir_val or not translation_file_val:
-                error_msg = "❌ 无法加载翻译文件：缺少任务目录或翻译文件路径"
-                logger.warning(f"[load_translation_for_editing] {error_msg}")
                 return (
                     gr.update(value="", visible=False),
                     gr.update(visible=False),
-                    error_msg
+                    ""
                 )
+            
+            import time
+            start_time = time.time()
+            logger.info(f"[load_translation_for_editing] 开始加载翻译文件，task_dir: {task_dir_val}, translation_file: {translation_file_val}")
             
             # 检查翻译文件是否存在
             if not os.path.exists(translation_file_val):
@@ -1849,8 +1849,8 @@ def create_interface():
                     gr.update(visible=True)
                 )
             
-            # 如果返回了task_dir和translation_file，说明需要编辑翻译
-            if task_dir_val and translation_file_val:
+            # 如果返回了task_dir和translation_file，且status_msg明确表示需要编辑，才显示翻译编辑界面
+            if task_dir_val and translation_file_val and ("步骤5完成" in status_msg or "请编辑翻译结果" in status_msg):
                 logger.info(f"[on_translate] 需要编辑翻译，显示翻译编辑界面，translation_file: {translation_file_val}")
                 # 显示翻译编辑界面
                 return (

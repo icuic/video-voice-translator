@@ -30,7 +30,25 @@ cd index-tts
 source .venv/bin/activate
 cd ..
 
-if python -c "import gradio; import whisper; import scipy; import httpx; import pydub; print('✅ 所有依赖验证通过')" 2>&1; then
+# 读取配置文件确定使用的 Whisper 后端
+if [ -f "${PROJECT_ROOT}/config.yaml" ]; then
+    WHISPER_BACKEND=$(grep -A 1 "^whisper:" "${PROJECT_ROOT}/config.yaml" | grep "backend:" | awk '{print $2}' | tr -d '"' || echo "faster-whisper")
+else
+    WHISPER_BACKEND="faster-whisper"
+fi
+
+# 根据配置检查对应的后端
+VERIFY_CMD="import gradio; import scipy; import httpx; import pydub; import openai; import resemblyzer; import ninja; import demucs; "
+if [ "$WHISPER_BACKEND" = "faster-whisper" ] || [ "$WHISPER_BACKEND" = "" ]; then
+    VERIFY_CMD="${VERIFY_CMD}import faster_whisper; "
+    BACKEND_NAME="faster-whisper"
+else
+    VERIFY_CMD="${VERIFY_CMD}import whisper; "
+    BACKEND_NAME="openai-whisper"
+fi
+VERIFY_CMD="${VERIFY_CMD}print('✅ 所有依赖验证通过（使用 ${BACKEND_NAME} 后端）')"
+
+if python -c "${VERIFY_CMD}" 2>&1; then
     echo ""
     echo "=========================================="
     echo "🎉 安装完成！"
@@ -41,5 +59,6 @@ if python -c "import gradio; import whisper; import scipy; import httpx; import 
     echo "2. 使用命令行: ./run_cli.sh input.mp4"
 else
     echo "⚠️  部分依赖可能未正确安装，请检查"
+    echo "   当前配置使用后端: ${BACKEND_NAME}"
     exit 1
 fi

@@ -38,6 +38,7 @@ test_*.py
 # 模型下载缓存
 .cache/
 cache/
+checkpoints/
 
 # IndexTTS2输出
 index-tts/output/

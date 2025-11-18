@@ -77,8 +77,8 @@ def validate_config(config: Dict[str, Any]) -> None:
         voice_config = config['voice_cloning']
         if 'model_path' not in voice_config:
             logging.warning("音色克隆配置缺少model_path")
-        if 'device' not in voice_config:
-            logging.warning("音色克隆配置缺少device")
+        # 注意：device 配置已移除，IndexTTS2 会自动检测并使用可用的设备（CUDA/CPU）
+        # 因此不再检查 device 配置项
     
     logging.info("配置验证完成")
 
