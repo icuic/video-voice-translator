@@ -1,5 +1,8 @@
 # 数据目录（统一管理）- 忽略整个 data/ 目录及其所有内容
 data/
+# 例外：demo 目录和文件需要被 Git 管理
+!data/demo/
+!data/demo/demo.mp4
 
 # 输出目录
 output/

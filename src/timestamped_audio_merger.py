@@ -284,8 +284,35 @@ class TimestampedAudioMerger:
             处理结果
         """
         try:
-            # 计算总样本数
-            total_samples = int(total_duration * self.sample_rate)
+            # 方案C：在加载第一个分段时自动检测采样率
+            # 先找到第一个有效的音频文件，加载它来获取原始采样率
+            detected_sample_rate = None
+            first_valid_audio_file = None
+            
+            for segment in segments:
+                audio_file = segment.get("audio_path", "")
+                if audio_file and os.path.exists(audio_file):
+                    first_valid_audio_file = audio_file
+                    break
+            
+            if first_valid_audio_file:
+                # 加载第一个分段（不指定采样率），自动获取原始采样率
+                try:
+                    _, detected_sample_rate = librosa.load(first_valid_audio_file, sr=None)
+                    self.logger.info(f"🎵 检测到音频采样率: {detected_sample_rate} Hz（原始分段采样率）")
+                except Exception as e:
+                    self.logger.warning(f"无法检测采样率，使用配置的采样率: {e}")
+                    detected_sample_rate = self.sample_rate
+            else:
+                self.logger.warning("未找到有效的音频文件，使用配置的采样率")
+                detected_sample_rate = self.sample_rate
+            
+            # 使用检测到的采样率（避免降采样导致音质损失）
+            actual_sample_rate = detected_sample_rate
+            self.logger.info(f"📊 使用采样率: {actual_sample_rate} Hz 进行音频合并（避免降采样）")
+            
+            # 计算总样本数（使用检测到的采样率）
+            total_samples = int(total_duration * actual_sample_rate)
             
             # 创建静音轨道
             audio_track = np.zeros(total_samples, dtype=np.float32)
@@ -322,17 +349,24 @@ class TimestampedAudioMerger:
                     # 使用调整后的音频文件（如果调整成功）或原始文件
                     final_audio_file = adjusted_audio if duration_adjusted else audio_file
                     
-                    # 加载音频文件
-                    audio_data, sr = librosa.load(final_audio_file, sr=self.sample_rate)
-                    actual_audio_duration = len(audio_data) / sr
+                    # 加载音频文件（使用 sr=None 保持原始采样率，如果采样率不一致则重采样到检测到的采样率）
+                    audio_data, sr = librosa.load(final_audio_file, sr=None)
+                    
+                    # 如果采样率不一致，重采样到检测到的采样率
+                    if sr != actual_sample_rate:
+                        self.logger.info(f"  🔄 采样率不匹配 ({sr} Hz != {actual_sample_rate} Hz)，重采样到 {actual_sample_rate} Hz")
+                        audio_data = librosa.resample(audio_data, orig_sr=sr, target_sr=actual_sample_rate)
+                        sr = actual_sample_rate
+                    # 使用检测到的采样率计算时长（此时 sr 应该等于 actual_sample_rate）
+                    actual_audio_duration = len(audio_data) / actual_sample_rate
                     
                     # 添加音频文件信息
                     self.logger.info(f"  实际音频时长: {actual_audio_duration:.3f}s")
                     self.logger.info(f"  分段目标时长: {end_time - start_time:.3f}s")
                     self.logger.info(f"  时长差异: {actual_audio_duration - (end_time - start_time):+.3f}s")
                     
-                    # 计算插入位置和时间窗口
-                    start_sample = int(start_time * self.sample_rate)
+                    # 计算插入位置和时间窗口（使用检测到的采样率）
+                    start_sample = int(start_time * actual_sample_rate)
                     
                     # 使用实际音频时长而不是原始分段时间戳
                     actual_audio_duration_samples = len(audio_data)
@@ -349,11 +383,11 @@ class TimestampedAudioMerger:
                         end_sample = total_samples
                         actual_audio_duration_samples = end_sample - start_sample
                         padded_audio = audio_data[:actual_audio_duration_samples]
-                        self.logger.warning(f"  ⚠️ 分段超出总时长，裁剪到: {actual_audio_duration_samples/sr:.3f}s")
+                        self.logger.warning(f"  ⚠️ 分段超出总时长，裁剪到: {actual_audio_duration_samples/actual_sample_rate:.3f}s")
                     else:
                         # 直接使用实际音频，不需要填充或扩展
                         padded_audio = audio_data
-                        self.logger.info(f"  ✅ 直接使用实际音频: {len(audio_data)/sr:.3f}s")
+                        self.logger.info(f"  ✅ 直接使用实际音频: {len(audio_data)/actual_sample_rate:.3f}s")
                     
                     # 检查是否与之前的音频重叠
                     if start_sample < len(audio_track):
@@ -364,8 +398,8 @@ class TimestampedAudioMerger:
                             # 存在重叠，使用全局优化策略
                             self.logger.warning(f"  ⚠️ 检测到音频重叠，使用全局优化策略")
                             
-                            # 计算重叠时长
-                            overlap_duration = (start_sample - len(audio_track)) / sr if start_sample < len(audio_track) else 0
+                            # 计算重叠时长（使用检测到的采样率）
+                            overlap_duration = (start_sample - len(audio_track)) / actual_sample_rate if start_sample < len(audio_track) else 0
                             
                             if overlap_duration > 0:
                                 # 全局优化策略：最小化调整距离和调整数量
@@ -378,7 +412,7 @@ class TimestampedAudioMerger:
                                 # 向前移动：保持与原始起始点最近
                                 if start_sample > 0:
                                     # 计算最小必要移动距离（刚好消除重叠）
-                                    min_shift = overlap_duration * sr * 1.1  # 多移动10%确保安全
+                                    min_shift = overlap_duration * actual_sample_rate * 1.1  # 多移动10%确保安全
                                     optimal_shift = min(min_shift, start_sample)
                                     new_start_sample = max(0, start_sample - int(optimal_shift))
                                     new_end_sample = new_start_sample + len(padded_audio)
@@ -389,19 +423,19 @@ class TimestampedAudioMerger:
                                         self._is_position_safe(audio_track, new_start_sample, new_end_sample)):
                                         
                                         # 计算移动后的时间偏差
-                                        new_start_time = new_start_sample / sr
+                                        new_start_time = new_start_sample / actual_sample_rate
                                         time_deviation = abs(new_start_time - current_segment_start_time)
                                         
                                         # 如果偏差在可接受范围内（比如0.5秒），使用新位置
                                         if time_deviation <= 0.5:
                                             audio_track[new_start_sample:new_end_sample] = padded_audio
-                                            self.logger.info(f"  ✅ 全局优化成功: 向前移动 {optimal_shift/sr:.3f}s，时间偏差 {time_deviation:.3f}s，新位置 {new_start_sample}-{new_end_sample}")
+                                            self.logger.info(f"  ✅ 全局优化成功: 向前移动 {optimal_shift/actual_sample_rate:.3f}s，时间偏差 {time_deviation:.3f}s，新位置 {new_start_sample}-{new_end_sample}")
                                             adjustment_success = True
                                 
                                 # 方案2：如果向前移动偏差太大，尝试向后移动
                                 if not adjustment_success and end_sample < total_samples:
                                     # 计算最小必要移动距离
-                                    min_shift = overlap_duration * sr * 1.1
+                                    min_shift = overlap_duration * actual_sample_rate * 1.1
                                     new_start_sample = start_sample + int(min_shift)
                                     new_end_sample = new_start_sample + len(padded_audio)
                                     
@@ -410,13 +444,13 @@ class TimestampedAudioMerger:
                                         self._is_position_safe(audio_track, new_start_sample, new_end_sample)):
                                         
                                         # 计算移动后的时间偏差
-                                        new_start_time = new_start_sample / sr
+                                        new_start_time = new_start_sample / actual_sample_rate
                                         time_deviation = abs(new_start_time - current_segment_start_time)
                                         
                                         # 如果偏差在可接受范围内，使用新位置
                                         if time_deviation <= 0.5:
                                             audio_track[new_start_sample:new_end_sample] = padded_audio
-                                            self.logger.info(f"  ✅ 全局优化成功: 向后移动 {min_shift/sr:.3f}s，时间偏差 {time_deviation:.3f}s，新位置 {new_start_sample}-{new_end_sample}")
+                                            self.logger.info(f"  ✅ 全局优化成功: 向后移动 {min_shift/actual_sample_rate:.3f}s，时间偏差 {time_deviation:.3f}s，新位置 {new_start_sample}-{new_end_sample}")
                                             adjustment_success = True
                                 
                                 # 方案3：如果全局优化失败，使用音频混合
@@ -455,8 +489,14 @@ class TimestampedAudioMerger:
             if os.path.exists(accompaniment_path):
                 self.logger.info(f"🎵 发现背景音乐文件，开始合并: {accompaniment_path}")
                 try:
-                    # 加载背景音乐
-                    accompaniment_data, accomp_sr = librosa.load(accompaniment_path, sr=self.sample_rate)
+                    # 加载背景音乐（使用检测到的采样率）
+                    accompaniment_data, accomp_sr = librosa.load(accompaniment_path, sr=None)
+                    
+                    # 如果采样率不一致，重采样到检测到的采样率
+                    if accomp_sr != actual_sample_rate:
+                        self.logger.info(f"  🔄 背景音乐采样率不匹配 ({accomp_sr} Hz != {actual_sample_rate} Hz)，重采样到 {actual_sample_rate} Hz")
+                        accompaniment_data = librosa.resample(accompaniment_data, orig_sr=accomp_sr, target_sr=actual_sample_rate)
+                        accomp_sr = actual_sample_rate
                     
                     # 调整背景音乐长度以匹配语音轨道
                     if len(accompaniment_data) < len(audio_track):
@@ -474,18 +514,18 @@ class TimestampedAudioMerger:
                     # 音量标准化
                     final_audio_normalized = self._normalize_audio_volume(final_audio)
                     
-                    # 保存合并后的音频
-                    sf.write(output_path, final_audio_normalized, self.sample_rate)
+                    # 保存合并后的音频（使用检测到的采样率）
+                    sf.write(output_path, final_audio_normalized, actual_sample_rate)
                 except Exception as e:
                     self.logger.warning(f"背景音乐合并失败: {e}，仅保存语音")
-                    # 如果合并失败，保存原始语音
-                    sf.write(output_path, audio_track, self.sample_rate)
+                    # 如果合并失败，保存原始语音（使用检测到的采样率）
+                    sf.write(output_path, audio_track, actual_sample_rate)
             else:
                 self.logger.info("⚠️  未找到背景音乐文件，仅保存语音")
                 # 音量标准化
                 final_audio_normalized = self._normalize_audio_volume(audio_track)
-                # 保存最终音频
-                sf.write(output_path, final_audio_normalized, self.sample_rate)
+                # 保存最终音频（使用检测到的采样率）
+                sf.write(output_path, final_audio_normalized, actual_sample_rate)
             
             # 清理临时目录
             import shutil

@@ -6,6 +6,19 @@ Video Voice Translator 是一个基于人工智能技术的多语言音视频翻
 
 系统集成了语音识别、文本翻译、音色克隆、音频处理等多项技术，实现端到端的音视频翻译流程。支持中文与英文之间的双向翻译，适用于视频内容本地化、多语言教学、跨语言内容创作等场景。
 
+## 演示视频
+
+> 📹 **演示视频**：查看 [demo.mp4](data/demo/demo.mp4) 
+
+<!-- 
+注意：GitHub 的 Markdown 渲染器不支持 HTML 视频标签，但其他 Markdown 查看器（如 VS Code、Typora、GitLab 等）可能支持。
+如果您在 GitHub 上查看，请直接点击上面的链接下载视频。
+-->
+<video width="800" controls>
+  <source src="data/demo/demo.mp4" type="video/mp4">
+  您的浏览器不支持视频标签。请直接下载：<a href="data/demo/demo.mp4">demo.mp4</a>
+</video>
+
 ## 核心功能
 
 ### 视频与音频处理
