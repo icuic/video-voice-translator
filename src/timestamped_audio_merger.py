@@ -284,7 +284,7 @@ class TimestampedAudioMerger:
             处理结果
         """
         try:
-            # 方案C：在加载第一个分段时自动检测采样率
+            # 优化采样率选择策略：检测克隆音频和背景音乐的采样率，选择较高的作为目标采样率
             # 先找到第一个有效的音频文件，加载它来获取原始采样率
             detected_sample_rate = None
             first_valid_audio_file = None
@@ -299,7 +299,7 @@ class TimestampedAudioMerger:
                 # 加载第一个分段（不指定采样率），自动获取原始采样率
                 try:
                     _, detected_sample_rate = librosa.load(first_valid_audio_file, sr=None)
-                    self.logger.info(f"🎵 检测到音频采样率: {detected_sample_rate} Hz（原始分段采样率）")
+                    self.logger.info(f"🎵 检测到克隆音频采样率: {detected_sample_rate} Hz")
                 except Exception as e:
                     self.logger.warning(f"无法检测采样率，使用配置的采样率: {e}")
                     detected_sample_rate = self.sample_rate
@@ -307,9 +307,27 @@ class TimestampedAudioMerger:
                 self.logger.warning("未找到有效的音频文件，使用配置的采样率")
                 detected_sample_rate = self.sample_rate
             
-            # 使用检测到的采样率（避免降采样导致音质损失）
-            actual_sample_rate = detected_sample_rate
-            self.logger.info(f"📊 使用采样率: {actual_sample_rate} Hz 进行音频合并（避免降采样）")
+            # 检查背景音乐的采样率（如果存在）
+            output_dir = os.path.dirname(output_path)
+            accompaniment_path = os.path.join(output_dir, "02_accompaniment.wav")
+            accompaniment_sample_rate = None
+            if os.path.exists(accompaniment_path):
+                try:
+                    _, accompaniment_sample_rate = librosa.load(accompaniment_path, sr=None)
+                    self.logger.info(f"🎵 检测到背景音乐采样率: {accompaniment_sample_rate} Hz")
+                except Exception as e:
+                    self.logger.warning(f"无法检测背景音乐采样率: {e}")
+            
+            # 选择两者中较高的采样率作为目标采样率（避免降采样导致音质损失）
+            if accompaniment_sample_rate is not None:
+                actual_sample_rate = max(detected_sample_rate, accompaniment_sample_rate)
+                if actual_sample_rate != detected_sample_rate:
+                    self.logger.info(f"📊 选择较高采样率: {actual_sample_rate} Hz（背景音乐 {accompaniment_sample_rate} Hz > 克隆音频 {detected_sample_rate} Hz），将升采样克隆音频而非降采样背景音乐")
+                else:
+                    self.logger.info(f"📊 选择较高采样率: {actual_sample_rate} Hz（克隆音频 {detected_sample_rate} Hz >= 背景音乐 {accompaniment_sample_rate} Hz）")
+            else:
+                actual_sample_rate = detected_sample_rate
+                self.logger.info(f"📊 使用采样率: {actual_sample_rate} Hz 进行音频合并（无背景音乐）")
             
             # 计算总样本数（使用检测到的采样率）
             total_samples = int(total_duration * actual_sample_rate)
@@ -352,10 +370,13 @@ class TimestampedAudioMerger:
                     # 加载音频文件（使用 sr=None 保持原始采样率，如果采样率不一致则重采样到检测到的采样率）
                     audio_data, sr = librosa.load(final_audio_file, sr=None)
                     
-                    # 如果采样率不一致，重采样到检测到的采样率
+                    # 如果采样率不一致，重采样到目标采样率（使用高质量重采样算法）
                     if sr != actual_sample_rate:
-                        self.logger.info(f"  🔄 采样率不匹配 ({sr} Hz != {actual_sample_rate} Hz)，重采样到 {actual_sample_rate} Hz")
-                        audio_data = librosa.resample(audio_data, orig_sr=sr, target_sr=actual_sample_rate)
+                        if sr < actual_sample_rate:
+                            self.logger.info(f"  🔄 采样率不匹配 ({sr} Hz < {actual_sample_rate} Hz)，升采样到 {actual_sample_rate} Hz（使用kaiser_best算法）")
+                        else:
+                            self.logger.info(f"  🔄 采样率不匹配 ({sr} Hz > {actual_sample_rate} Hz)，降采样到 {actual_sample_rate} Hz（使用kaiser_best算法）")
+                        audio_data = librosa.resample(audio_data, orig_sr=sr, target_sr=actual_sample_rate, res_type='kaiser_best')
                         sr = actual_sample_rate
                     # 使用检测到的采样率计算时长（此时 sr 应该等于 actual_sample_rate）
                     actual_audio_duration = len(audio_data) / actual_sample_rate
@@ -501,10 +522,13 @@ class TimestampedAudioMerger:
                     # 加载背景音乐（使用检测到的采样率）
                     accompaniment_data, accomp_sr = librosa.load(accompaniment_path, sr=None)
                     
-                    # 如果采样率不一致，重采样到检测到的采样率
+                    # 如果采样率不一致，重采样到目标采样率（使用高质量重采样算法）
                     if accomp_sr != actual_sample_rate:
-                        self.logger.info(f"  🔄 背景音乐采样率不匹配 ({accomp_sr} Hz != {actual_sample_rate} Hz)，重采样到 {actual_sample_rate} Hz")
-                        accompaniment_data = librosa.resample(accompaniment_data, orig_sr=accomp_sr, target_sr=actual_sample_rate)
+                        if accomp_sr < actual_sample_rate:
+                            self.logger.info(f"  🔄 背景音乐采样率不匹配 ({accomp_sr} Hz < {actual_sample_rate} Hz)，升采样到 {actual_sample_rate} Hz（使用kaiser_best算法）")
+                        else:
+                            self.logger.info(f"  🔄 背景音乐采样率不匹配 ({accomp_sr} Hz > {actual_sample_rate} Hz)，降采样到 {actual_sample_rate} Hz（使用kaiser_best算法）")
+                        accompaniment_data = librosa.resample(accompaniment_data, orig_sr=accomp_sr, target_sr=actual_sample_rate, res_type='kaiser_best')
                         accomp_sr = actual_sample_rate
                     
                     # 调整背景音乐长度以匹配语音轨道
@@ -516,25 +540,34 @@ class TimestampedAudioMerger:
                         # 背景音乐较长，裁剪
                         accompaniment_data = accompaniment_data[:len(audio_track)]
                     
-                    # 合并语音和背景音乐，并进行音量平衡
-                    final_audio = self._balance_audio_levels(audio_track, accompaniment_data)
+                    # 分析原始音频中背景音乐和人声的相对比例
+                    original_voice_rms, original_accomp_rms = self._analyze_original_audio_ratio(output_dir, actual_sample_rate)
+                    
+                    # 优化处理顺序：先进行音量平衡，再进行混合，最后统一进行音量标准化
+                    # 合并语音和背景音乐，并进行音量平衡（保持原始比例）
+                    final_audio = self._balance_audio_levels(audio_track, accompaniment_data, 
+                                                             original_voice_rms, original_accomp_rms)
                     self.logger.info("✅ 背景音乐合并成功")
                     
-                    # 音量标准化
+                    # 音量标准化（最后统一进行）
                     final_audio_normalized = self._normalize_audio_volume(final_audio)
                     
                     # 保存合并后的音频（使用检测到的采样率）
-                    sf.write(output_path, final_audio_normalized, actual_sample_rate)
+                    # soundfile会自动将float32转换为PCM_16，并使用高质量dithering减少量化误差
+                    # 使用PCM_16格式（最通用，soundfile会自动进行高质量转换）
+                    sf.write(output_path, final_audio_normalized, actual_sample_rate, subtype='PCM_16')
                 except Exception as e:
                     self.logger.warning(f"背景音乐合并失败: {e}，仅保存语音")
-                    # 如果合并失败，保存原始语音（使用检测到的采样率）
-                    sf.write(output_path, audio_track, actual_sample_rate)
+                    # 如果合并失败，先进行音量标准化，然后保存原始语音（使用检测到的采样率）
+                    audio_track_normalized = self._normalize_audio_volume(audio_track)
+                    sf.write(output_path, audio_track_normalized, actual_sample_rate, subtype='PCM_16')
             else:
                 self.logger.info("⚠️  未找到背景音乐文件，仅保存语音")
-                # 音量标准化
+                # 优化处理顺序：最后统一进行音量标准化
                 final_audio_normalized = self._normalize_audio_volume(audio_track)
                 # 保存最终音频（使用检测到的采样率）
-                sf.write(output_path, final_audio_normalized, actual_sample_rate)
+                # soundfile会自动将float32转换为PCM_16，并使用高质量dithering减少量化误差
+                sf.write(output_path, final_audio_normalized, actual_sample_rate, subtype='PCM_16')
             
             # 清理临时目录
             import shutil
@@ -992,13 +1025,69 @@ class TimestampedAudioMerger:
             self.logger.error(f"调整音频时长失败: {e}")
             return False
     
-    def _balance_audio_levels(self, voice_audio: np.ndarray, background_audio: np.ndarray) -> np.ndarray:
+    def _analyze_original_audio_ratio(self, output_dir: str, target_sample_rate: int) -> tuple:
         """
-        平衡人声和背景音乐的音量
+        分析原始音频中背景音乐和人声的相对比例
+        
+        Args:
+            output_dir: 输出目录路径
+            target_sample_rate: 目标采样率
+            
+        Returns:
+            (原始人声RMS, 原始背景音乐RMS) 的元组
+        """
+        try:
+            # 加载分离后的人声和背景音乐
+            vocals_path = os.path.join(output_dir, "02_vocals.wav")
+            accompaniment_path = os.path.join(output_dir, "02_accompaniment.wav")
+            
+            if os.path.exists(vocals_path) and os.path.exists(accompaniment_path):
+                vocals, vocals_sr = librosa.load(vocals_path, sr=None)
+                accompaniment, accomp_sr = librosa.load(accompaniment_path, sr=None)
+                
+                # 统一采样率
+                if vocals_sr != target_sample_rate:
+                    vocals = librosa.resample(vocals, orig_sr=vocals_sr, target_sr=target_sample_rate, res_type='kaiser_best')
+                if accomp_sr != target_sample_rate:
+                    accompaniment = librosa.resample(accompaniment, orig_sr=accomp_sr, target_sr=target_sample_rate, res_type='kaiser_best')
+                
+                # 调整长度以匹配
+                min_length = min(len(vocals), len(accompaniment))
+                vocals = vocals[:min_length]
+                accompaniment = accompaniment[:min_length]
+                
+                # 计算RMS
+                original_voice_rms = np.sqrt(np.mean(vocals**2))
+                original_accomp_rms = np.sqrt(np.mean(accompaniment**2))
+                
+                if original_accomp_rms > 0:
+                    original_ratio = original_voice_rms / original_accomp_rms
+                    self.logger.info(f"📊 原始音频比例分析:")
+                    self.logger.info(f"  原始人声RMS: {original_voice_rms:.6f}")
+                    self.logger.info(f"  原始背景音乐RMS: {original_accomp_rms:.6f}")
+                    self.logger.info(f"  原始人声/背景音乐比例: {original_ratio:.2f}x")
+                    return (original_voice_rms, original_accomp_rms)
+                else:
+                    self.logger.warning("原始背景音乐RMS为0，无法计算比例")
+                    return (None, None)
+            else:
+                self.logger.warning("未找到原始人声或背景音乐文件，无法分析原始比例")
+                return (None, None)
+        except Exception as e:
+            self.logger.warning(f"分析原始音频比例失败: {e}")
+            return (None, None)
+    
+    def _balance_audio_levels(self, voice_audio: np.ndarray, background_audio: np.ndarray, 
+                             original_voice_rms: Optional[float] = None, 
+                             original_accomp_rms: Optional[float] = None) -> np.ndarray:
+        """
+        平衡人声和背景音乐的音量，保持原始音频的相对比例
         
         Args:
             voice_audio: 人声音频数据
             background_audio: 背景音乐音频数据
+            original_voice_rms: 原始人声RMS（可选）
+            original_accomp_rms: 原始背景音乐RMS（可选）
             
         Returns:
             平衡后的音频数据
@@ -1009,27 +1098,79 @@ class TimestampedAudioMerger:
             background_rms = np.sqrt(np.mean(background_audio**2))
             
             self.logger.info(f"🔊 音量分析:")
-            self.logger.info(f"  人声RMS: {voice_rms:.4f}")
+            self.logger.info(f"  克隆人声RMS: {voice_rms:.4f}")
             self.logger.info(f"  背景音乐RMS: {background_rms:.4f}")
             
-            # 设置目标音量比例：人声占主导，背景音乐适度降低
-            voice_target_ratio = 0.6  # 人声占60%
-            background_target_ratio = 0.4  # 背景音乐占40%
-            
-            # 计算调整系数
-            if voice_rms > 0:
-                voice_gain = voice_target_ratio / voice_rms
-            else:
-                voice_gain = 1.0
+            # 如果提供了原始比例，使用原始比例；否则使用固定目标比例
+            if original_voice_rms is not None and original_accomp_rms is not None and original_accomp_rms > 0:
+                # 保持原始音频中背景音乐和人声的相对比例
+                original_ratio = original_voice_rms / original_accomp_rms
+                self.logger.info(f"  使用原始比例: 人声/背景音乐 = {original_ratio:.2f}x")
                 
-            if background_rms > 0:
-                background_gain = background_target_ratio / background_rms
+                # 修复：基于原始人声RMS设置目标，而不是固定0.3-0.5
+                # 如果克隆人声RMS >= 原始人声RMS，使用原始人声RMS作为目标
+                # 如果克隆人声RMS < 原始人声RMS，适度放大但不超过原始人声RMS的1.2倍
+                if voice_rms > 0:
+                    if voice_rms >= original_voice_rms:
+                        # 克隆人声已经足够大，使用原始人声RMS作为目标（保持或略微降低）
+                        target_voice_rms = original_voice_rms
+                        self.logger.info(f"  克隆人声RMS ({voice_rms:.4f}) >= 原始人声RMS ({original_voice_rms:.4f})，使用原始人声RMS作为目标")
+                    else:
+                        # 克隆人声较小，适度放大但不超过原始人声RMS的1.2倍
+                        target_voice_rms = min(original_voice_rms * 1.2, max(voice_rms, original_voice_rms * 0.9))
+                        self.logger.info(f"  克隆人声RMS ({voice_rms:.4f}) < 原始人声RMS ({original_voice_rms:.4f})，适度放大到 {target_voice_rms:.4f}")
+                    
+                    voice_gain = target_voice_rms / voice_rms
+                    voice_gain = np.clip(voice_gain, 0.1, 3.0)  # 限制人声增益
+                else:
+                    voice_gain = 1.0
+                    target_voice_rms = original_voice_rms if original_voice_rms else 0.3
+                
+                # 根据原始比例，计算背景音乐的目标RMS
+                target_background_rms = target_voice_rms / original_ratio
+                
+                # 计算背景音乐增益
+                if background_rms > 0:
+                    background_gain = target_background_rms / background_rms
+                    # 限制背景音乐增益，避免过度放大（最大1.2x，更保守）
+                    # 如果计算出的增益小于1.0，说明背景音乐已经足够大，不需要放大
+                    background_gain = np.clip(background_gain, 0.0, 1.2)
+                    
+                    # 额外检查：如果目标背景音乐RMS比原始背景音乐RMS大很多，进一步限制
+                    if target_background_rms > original_accomp_rms * 1.5:
+                        self.logger.warning(f"  ⚠️ 目标背景音乐RMS ({target_background_rms:.4f}) 比原始背景音乐RMS ({original_accomp_rms:.4f}) 大很多，限制增益")
+                        # 限制目标背景音乐RMS不超过原始背景音乐RMS的1.2倍
+                        target_background_rms = original_accomp_rms * 1.2
+                        background_gain = target_background_rms / background_rms
+                        background_gain = np.clip(background_gain, 0.0, 1.2)
+                else:
+                    background_gain = 0.0
+                
+                self.logger.info(f"  目标人声RMS: {target_voice_rms:.4f} (原始: {original_voice_rms:.4f})")
+                self.logger.info(f"  目标背景音乐RMS: {target_background_rms:.4f} (原始: {original_accomp_rms:.4f}, 保持原始比例 {original_ratio:.2f}x)")
             else:
-                background_gain = 0.0
-            
-            # 限制增益范围，避免过度放大
-            voice_gain = np.clip(voice_gain, 0.1, 5.0)
-            background_gain = np.clip(background_gain, 0.0, 2.0)
+                # 回退到固定目标比例（如果无法获取原始比例）
+                self.logger.info(f"  使用固定目标比例（无法获取原始比例）")
+                if voice_rms > 0.1:
+                    voice_target_ratio = 0.5  # 人声占50%
+                else:
+                    voice_target_ratio = 0.6  # 人声占60%
+                background_target_ratio = 0.2  # 背景音乐占20%（降低，减少干扰）
+                
+                # 计算调整系数
+                if voice_rms > 0:
+                    voice_gain = voice_target_ratio / voice_rms
+                else:
+                    voice_gain = 1.0
+                    
+                if background_rms > 0:
+                    background_gain = background_target_ratio / background_rms
+                else:
+                    background_gain = 0.0
+                
+                # 限制增益范围
+                voice_gain = np.clip(voice_gain, 0.1, 3.0)
+                background_gain = np.clip(background_gain, 0.0, 1.5)  # 降低背景音乐最大增益
             
             self.logger.info(f"  人声增益: {voice_gain:.2f}x")
             self.logger.info(f"  背景音乐增益: {background_gain:.2f}x")
@@ -1038,12 +1179,33 @@ class TimestampedAudioMerger:
             balanced_voice = voice_audio * voice_gain
             balanced_background = background_audio * background_gain
             
+            # 防止削波：在混合前检查峰值
+            voice_peak = np.max(np.abs(balanced_voice))
+            background_peak = np.max(np.abs(balanced_background))
+            estimated_peak = voice_peak + background_peak
+            
+            if estimated_peak > 1.0:
+                self.logger.warning(f"  ⚠️ 检测到可能削波（估计峰值: {estimated_peak:.4f} > 1.0），先归一化")
+                # 如果估计峰值超过1.0，先归一化两个音频
+                if voice_peak > 0:
+                    balanced_voice = balanced_voice / max(voice_peak, 0.7)  # 归一化到0.7，留出空间给背景音乐
+                if background_peak > 0:
+                    balanced_background = balanced_background / max(background_peak, 0.3)  # 归一化到0.3
+            
             # 合并音频
             final_audio = balanced_voice + balanced_background
             
+            # 检查混合后的峰值，防止削波
+            final_peak = np.max(np.abs(final_audio))
+            if final_peak > 1.0:
+                self.logger.warning(f"  ⚠️ 混合后检测到削波（峰值: {final_peak:.4f} > 1.0），进行归一化")
+                final_audio = final_audio / final_peak * 0.99  # 归一化到0.99，避免完全削波
+            
             # 计算最终音量
             final_rms = np.sqrt(np.mean(final_audio**2))
+            final_peak_after = np.max(np.abs(final_audio))
             self.logger.info(f"  最终音频RMS: {final_rms:.4f}")
+            self.logger.info(f"  最终峰值: {final_peak_after:.4f}")
             
             return final_audio
             
@@ -1070,31 +1232,45 @@ class TimestampedAudioMerger:
                 self.logger.warning("音频数据为空，跳过音量标准化")
                 return audio
             
+            # 防止削波：如果峰值已经超过1.0，先归一化
+            if current_peak > 1.0:
+                self.logger.warning(f"  ⚠️ 检测到削波（峰值: {current_peak:.4f} > 1.0），先归一化")
+                audio = audio / current_peak * 0.99  # 归一化到0.99
+                current_peak = 0.99
+            
             # 目标峰值：与原视频完全一致或稍微小一点点
             # 如果原始峰值已经很高，稍微降低5%；如果较低，适当提升
-            if current_peak > 1.0:
+            if current_peak > 0.95:
                 target_peak = current_peak * 0.95  # 稍微降低5%
-            else:
+            elif current_peak > 0.8:
                 target_peak = 0.9  # 适当提升到90%
+            else:
+                target_peak = 0.9  # 提升到90%
             
             # 计算增益
             gain = target_peak / current_peak
             
             # 限制增益范围，避免过度放大或缩小
             # 如果音频已经很响，稍微降低；如果较低，适度提升
-            if current_peak > 1.0:
+            if current_peak > 0.95:
                 gain = 0.95  # 稍微降低5%
             elif current_peak > 0.8:
                 gain = min(gain, 1.2)  # 最多放大20%
             else:
-                gain = min(gain, 2.0)  # 最多放大100%
+                gain = min(gain, 1.5)  # 最多放大50%（降低从2.0到1.5）
             
             # 应用增益
             normalized_audio = audio * gain
             
+            # 再次检查峰值，确保不超过1.0
+            final_peak = np.max(np.abs(normalized_audio))
+            if final_peak > 1.0:
+                self.logger.warning(f"  ⚠️ 增益后检测到削波（峰值: {final_peak:.4f} > 1.0），进行最终归一化")
+                normalized_audio = normalized_audio / final_peak * 0.99
+                final_peak = 0.99
+            
             # 计算最终音量信息
             final_rms = np.sqrt(np.mean(normalized_audio**2))
-            final_peak = np.max(np.abs(normalized_audio))
             
             self.logger.info(f"🔊 音量调整:")
             self.logger.info(f"  原始峰值: {current_peak:.4f}")

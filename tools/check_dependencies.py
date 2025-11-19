@@ -18,6 +18,7 @@ REQUIRED_DEPENDENCIES = {
     "pydub": "pydub",
     "tiktoken": "tiktoken",
     "demucs": "demucs",  # 音频分离模型（人声和背景音乐分离）
+    "resampy": "resampy",  # 音频重采样库（librosa 等库的依赖）
 }
 
 # index-tts 核心依赖（应该已安装）

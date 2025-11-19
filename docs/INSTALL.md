@@ -94,6 +94,7 @@ cd ..
 - **ninja**：用于编译 IndexTTS2 的 CUDA kernel（加速推理）
 - **pyannote.audio**：说话人分离模型
 - **demucs**：音频分离模型（用于人声和背景音乐分离）
+- **resampy**：音频重采样库（librosa 等库的依赖）
 - **scipy**、**httpx**、**pydub**：其他工具依赖
 
 **安装方式**：提供三种方式，选择其中一种即可：

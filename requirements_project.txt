@@ -50,6 +50,7 @@ httpx>=0.24.0
 # 音频处理增强
 pydub>=0.25.1
 demucs>=4.0.1  # 音频分离模型（人声和背景音乐分离）
+resampy>=0.4.2  # 音频重采样库（librosa 等库的依赖）
 
 # 文本翻译（DashScope API）
 openai>=1.0.0  # 用于调用阿里云 DashScope API（Qwen 模型）
