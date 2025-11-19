@@ -1143,6 +1143,13 @@ class TimestampedAudioMerger:
                         target_background_rms = original_accomp_rms * 1.2
                         background_gain = target_background_rms / background_rms
                         background_gain = np.clip(background_gain, 0.0, 1.2)
+                    
+                    # 关键修复：如果人声被降低（增益<1.0），背景音乐也应该相应降低，以保持相对比例
+                    if voice_gain < 1.0 and background_gain > voice_gain:
+                        self.logger.info(f"  🔧 人声被降低（增益 {voice_gain:.2f}x），限制背景音乐增益不超过人声增益，以保持相对比例")
+                        background_gain = min(background_gain, voice_gain)
+                        # 重新计算目标背景音乐RMS（基于限制后的增益）
+                        target_background_rms = background_rms * background_gain
                 else:
                     background_gain = 0.0
                 
