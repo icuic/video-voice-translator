@@ -997,24 +997,21 @@ def create_interface():
                 
                 if result and result.get("success"):
                     final_video_path = result.get("final_video_path")
-                    final_audio_path = result.get("final_audio_path")
                     total_time = result.get("total_time")
                     time_text = f"耗时: {total_time:.1f}秒" if isinstance(total_time, (int, float)) else ""
                     
                     # 查找输出文件（如果路径不正确）
                     task_dir_val = result.get("task_dir")
-                    if not final_video_path and not final_audio_path and task_dir_val:
-                        import glob
-                        if mode == "视频":
-                            video_files = sorted(glob.glob(os.path.join(task_dir_val, "*.mp4")), key=os.path.getmtime, reverse=True)
-                            if video_files:
-                                final_video_path = video_files[0]
-                        else:
-                            audio_files = sorted(glob.glob(os.path.join(task_dir_val, "*.wav")), key=os.path.getmtime, reverse=True)
-                            if audio_files:
-                                final_audio_path = audio_files[0]
+                    import glob
                     
                     if mode == "视频":
+                        # 视频模式：如果 final_video_path 不存在或文件不存在，尝试查找
+                        if not final_video_path or not os.path.exists(final_video_path):
+                            if task_dir_val:
+                                video_files = sorted(glob.glob(os.path.join(task_dir_val, "*.mp4")), key=os.path.getmtime, reverse=True)
+                                if video_files:
+                                    final_video_path = video_files[0]
+                        
                         if final_video_path and os.path.exists(final_video_path):
                             return (
                                 gr.update(visible=False),
@@ -1034,6 +1031,27 @@ def create_interface():
                                 "✅ 翻译完成，但未找到输出文件"
                             )
                     else:
+                        # 音频模式：对于音频模式，final_video_path 实际包含音频文件路径
+                        final_audio_path = final_video_path  # translate_media 返回的 final_video_path 对于音频模式实际是音频文件
+                        
+                        # 如果 final_audio_path 不存在或文件不存在，使用回退逻辑查找
+                        if not final_audio_path or not os.path.exists(final_audio_path):
+                            if task_dir_val:
+                                # 优先查找 09_translated*.wav 格式的文件
+                                translated_files = sorted(glob.glob(os.path.join(task_dir_val, "09_translated*.wav")), key=os.path.getmtime, reverse=True)
+                                if translated_files:
+                                    final_audio_path = translated_files[0]
+                                else:
+                                    # 其次查找 08_final_voice.wav
+                                    final_voice_path = os.path.join(task_dir_val, "08_final_voice.wav")
+                                    if os.path.exists(final_voice_path):
+                                        final_audio_path = final_voice_path
+                                    else:
+                                        # 最后查找所有 .wav 文件
+                                        audio_files = sorted(glob.glob(os.path.join(task_dir_val, "*.wav")), key=os.path.getmtime, reverse=True)
+                                        if audio_files:
+                                            final_audio_path = audio_files[0]
+                        
                         if final_audio_path and os.path.exists(final_audio_path):
                             return (
                                 gr.update(visible=False),
