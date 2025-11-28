@@ -2,14 +2,47 @@
 
 ## 系统要求
 
-- Python 3.10 或更高版本
-- FFmpeg（系统依赖）
-- CUDA（可选，用于GPU加速）
-- 至少 8GB 内存（推荐 16GB 或更多）
-- 足够的磁盘空间（用于模型和缓存）
-- uv 包管理器（用于安装 index-tts 依赖）
+- **系统内存（RAM）**：至少 8GB（推荐 16GB 或更多）
+- **磁盘空间**：至少 30GB（用于模型文件约 5.5GB、虚拟环境约 9GB、依赖和缓存等）
+- **GPU**：NVIDIA GPU，显存至少 8GB（推荐 RTX 3060/4060 或更高型号，CPU 模式运行会很慢）
 
-## 系统依赖安装
+## 推荐配置
+
+以下配置已通过测试，可流畅运行本项目：
+
+- **系统内存（RAM）**：38GB
+- **磁盘空间**：128GB
+- **GPU**：NVIDIA Tesla V100-SXM2-32GB（32GB 显存）
+- **CPU**：10 核
+- **Python**：3.10.11
+
+## 一键安装（推荐）
+
+强烈推荐使用以下脚本，一键完成所有安装步骤：
+
+```bash
+./install_all.sh
+```
+
+**一键安装脚本会自动处理：**
+- ✅ 安装系统依赖（FFmpeg、lsof）
+- ✅ 安装 IndexTTS2
+- ✅ 安装主项目依赖
+- ✅ 验证安装（包括依赖、IndexTTS2、模型文件）
+- ✅ 配置环境变量（DASHSCOPE_API_KEY）
+
+**注意**：
+- 模型文件较大（约 5.5GB），下载可能需要一些时间
+- 脚本会优先使用 ModelScope（国内用户），如果失败会尝试 HuggingFace
+- 安装完成后会提示配置 DASHSCOPE_API_KEY（翻译功能需要）
+
+---
+
+**以下内容为手动安装步骤，如果您已使用一键安装，可以跳过。**
+
+## 手动安装
+
+### 一、系统依赖安装
 
 在开始安装 Python 依赖之前，需要先安装系统级依赖。
 
@@ -41,134 +74,66 @@ ffprobe -version
 sudo apt-get install -y lsof
 ```
 
-## 安装步骤
+### 二、安装 IndexTTS2
 
-### 前置步骤：安装 IndexTTS2
+本项目依赖 IndexTTS2 进行音色克隆功能。在安装主项目依赖之前，必须先完成 IndexTTS2 的安装。
 
-**重要**：本项目依赖 IndexTTS2 进行音色克隆功能。在安装主项目依赖之前，必须先完成 IndexTTS2 的安装。
+**安装 IndexTTS2**：提供两种安装方式，选择其中一种即可。
 
-**安装 IndexTTS2**：
+#### 方式一（推荐）：使用项目提供的便捷脚本
 
-1. **在项目根目录执行克隆命令**：
-   ```bash
-   # 确保您在项目根目录
-   # 执行以下命令克隆 IndexTTS2 仓库
-   git clone https://github.com/index-tts/index-tts.git
-   ```
+```bash
+./scripts/install/install_index_tts.sh
+```
 
-2. **按照官方文档完成安装**：
-   - 官方仓库地址：https://github.com/index-tts/index-tts
-   - 请参考官方 README 中的完整安装说明
-   - 进入 `index-tts` 目录，按照官方文档执行安装步骤
-   - 确保安装完成后，IndexTTS2 的虚拟环境位于 `index-tts/.venv`
+**脚本会自动处理：**
+- ✅ 检查并安装 uv（如果未安装）
+- ✅ 克隆 IndexTTS2 仓库（如果不存在）
+- ✅ 安装 IndexTTS2 依赖（使用国内镜像源）
+- ✅ 验证安装
+- ✅ 下载模型文件（必需，约 5.5GB）
+
+**重要提示：**
+- 脚本会自动使用国内镜像源（适合国内用户）
+- 模型文件会自动下载，下载完成后音色克隆功能即可正常使用
+- 如果下载失败，请参考 [IndexTTS2 官方文档](https://github.com/index-tts/index-tts) 手动下载
+
+#### 方式二：按照官方文档手动安装
+
+如果您希望手动控制安装过程，可以按照官方文档进行安装：
+
+- **官方文档链接**：https://github.com/index-tts/index-tts
+
+请参考 [IndexTTS2 官方 README.md](https://github.com/index-tts/index-tts) 中的完整安装说明。
 
 **验证 IndexTTS2 安装**：
 ```bash
 # 在项目根目录执行以下命令验证安装
-# 检查 index-tts 目录是否存在
-ls -la index-tts/
-
-# 检查虚拟环境是否存在
-ls -la index-tts/.venv/bin/activate
-
-# 激活虚拟环境并验证 IndexTTS2 可以导入
 cd index-tts
 source .venv/bin/activate
 python -c "from indextts.infer_v2 import IndexTTS2; print('IndexTTS2 安装成功')"
 cd ..
 ```
 
-### 安装主项目依赖
+### 三、安装主项目依赖
 
-**说明**：完成 IndexTTS2 安装后，需要安装主项目的额外依赖。主项目的依赖文件是 `requirements_project.txt`，包含 IndexTTS2 中没有的依赖（如 faster-whisper、openai-whisper、pyannote 等）。
-
-**重要提示**：
-- 默认使用 **faster-whisper** 作为语音识别后端（基于 CTranslate2，速度更快）
-- 同时也安装 **openai-whisper** 作为备选后端（基于 PyTorch）
-- 可以在 `config.yaml` 中通过 `whisper.backend` 配置项切换后端
-
-**主要依赖说明**：
-- **faster-whisper** / **openai-whisper**：语音识别引擎
-- **openai**：用于调用阿里云 DashScope API（Qwen 模型）进行文本翻译
-- **resemblyzer**：用于说话人分离的语音编码器
-- **ninja**：用于编译 IndexTTS2 的 CUDA kernel（加速推理）
-- **pyannote.audio**：说话人分离模型
-- **demucs**：音频分离模型（用于人声和背景音乐分离）
-- **resampy**：音频重采样库（librosa 等库的依赖）
-- **scipy**、**httpx**、**pydub**：其他工具依赖
-
-**安装方式**：提供三种方式，选择其中一种即可：
-- **方式一**：使用 uv 安装（推荐，速度最快）
-- **方式二**：使用 pip 安装（备选方式）
-- **方式三**：使用启动脚本（自动处理）
-
-### 方式一：使用 uv 安装（推荐）
-
-**优势**：uv 比 pip 快 10-100 倍，更可靠。
-
-**前提条件**：确保已按照 [IndexTTS2 官方文档](https://github.com/index-tts/index-tts) 完成 IndexTTS2 的安装。
+**说明**：完成 IndexTTS2 安装后，需要安装主项目的额外依赖。主项目的依赖文件是 `requirements_project.txt`，包含 IndexTTS2 中没有的依赖。
 
 ```bash
-# 1. 激活 IndexTTS2 的虚拟环境
-cd index-tts
-source .venv/bin/activate
-cd ..
-
-# 2. 使用 uv 安装主项目额外依赖（推荐）
-# uv pip install 会自动使用当前激活的虚拟环境
-uv pip install -r requirements_project.txt
-
-# 3. 验证安装
-python tools/check_dependencies.py
-# 或使用快速验证（根据配置的后端选择）
-# 如果使用 faster-whisper（默认）:
-python -c "import gradio; import faster_whisper; import scipy; print('依赖安装成功')"
-# 如果使用 openai-whisper:
-python -c "import gradio; import whisper; import scipy; print('依赖安装成功')"
-```
-
-**或者使用便捷脚本**：
-
-```bash
-# 使用官方源
-./scripts/install/install_with_uv.sh
-
-# 或使用国内镜像源（推荐国内用户）
+# 使用国内镜像源（推荐国内用户）
 ./scripts/install/install_with_uv_china.sh
+
+# 或使用官方源
+./scripts/install/install_with_uv.sh
 ```
 
-### 方式二：使用 pip 安装
-
-如果无法使用 uv，也可以使用传统的 pip 方式：
-
-**前提条件**：确保已按照 [IndexTTS2 官方文档](https://github.com/index-tts/index-tts) 完成 IndexTTS2 的安装。
+**验证安装**：
 
 ```bash
-# 1. 激活 IndexTTS2 的虚拟环境
-cd index-tts
-source .venv/bin/activate
-
-# 2. 返回项目根目录，安装主项目额外依赖
-cd ..
-pip install -r requirements_project.txt
-
-# 3. 验证安装
 python tools/check_dependencies.py
 ```
 
-### 方式三：使用启动脚本自动安装
-
-```bash
-# 直接运行启动脚本，会自动激活虚拟环境并检查依赖
-./run_webui.sh
-```
-
-启动脚本会自动：
-- 激活 index-tts 虚拟环境
-- 检查并安装缺失的主项目额外依赖
-- 启动 Web UI
-
-## 环境变量配置
+### 四、环境变量配置
 
 ### DASHSCOPE_API_KEY 配置（翻译功能必需）
 
@@ -194,29 +159,6 @@ export DASHSCOPE_API_KEY='your-api-key-here'
 ```bash
 source ~/.bashrc
 ```
-
-**验证配置**：
-
-启动脚本会自动从 `~/.bashrc` 读取 `DASHSCOPE_API_KEY`，并在启动时显示是否已设置：
-
-- ✅ 如果已设置：会显示 `✅ DASHSCOPE_API_KEY已设置（长度: XX）`
-- ⚠️ 如果未设置：会显示警告信息，翻译功能将无法使用
-
-**注意**：启动脚本使用非交互式 shell，无法直接 source `~/.bashrc`，所以脚本会直接从文件中读取环境变量值。
-
-### HF_ENDPOINT 配置（可选，国内用户推荐）
-
-如果访问 HuggingFace 较慢，可以配置国内镜像源。
-
-**配置方式**：
-
-在 `~/.bashrc` 文件中添加：
-
-```bash
-export HF_ENDPOINT="https://hf-mirror.com"
-```
-
-启动脚本会自动读取此配置。
 
 ## 下一步
 

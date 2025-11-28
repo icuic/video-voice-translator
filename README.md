@@ -126,6 +126,7 @@ video_voice_translator/
 ├── docs/                         # 文档目录
 ├── media_translation_webui.py    # Web UI 入口
 ├── media_translation_cli.py      # 命令行入口
+├── install_all.sh                # 一键安装脚本（推荐）
 ├── run_webui.sh                  # Web UI 启动脚本
 ├── run_cli.sh                    # CLI 翻译启动脚本
 ├── scripts/                      # 脚本目录
@@ -143,37 +144,25 @@ video_voice_translator/
 
 ### 系统要求
 
-- Python 3.10 或更高版本
-- FFmpeg（系统依赖）
-- CUDA（可选，用于GPU加速）
-- 至少 8GB 内存（推荐 16GB 或更多）
-- 足够的磁盘空间（用于模型和缓存）
+- **系统内存（RAM）**：至少 8GB（推荐 16GB 或更多）
+- **磁盘空间**：至少 30GB（用于模型文件约 5.5GB、虚拟环境约 9GB、依赖和缓存等）
+- **GPU**：NVIDIA GPU，显存至少 8GB（推荐 RTX 3060/4060 或更高型号，CPU 模式运行会很慢）
 
-详细系统要求请参考：[安装指南](docs/INSTALL.md)
+详细系统要求和推荐配置请参考：[安装指南](docs/INSTALL.md)
 
 ### 安装
 
-**重要提示**：本项目依赖 IndexTTS2 进行音色克隆。请先按照 [IndexTTS2 官方 GitHub 仓库](https://github.com/index-tts/index-tts) 的文档完成 IndexTTS2 的安装和配置，然后再继续以下步骤。
+**推荐方式：一键安装**
+
+使用一键安装脚本自动完成所有安装步骤（包括系统依赖、IndexTTS2、主项目依赖、模型下载等）：
 
 ```bash
-# 1. 安装主项目额外依赖
-# 确保已按照 IndexTTS2 官方文档完成安装，并激活其虚拟环境
-cd index-tts
-source .venv/bin/activate
-cd ..
-
-# 在主项目根目录安装主项目的额外依赖
-pip install -r requirements_project.txt
-
-# 2. 确保系统已安装 FFmpeg
-# Ubuntu/Debian:
-sudo apt update && sudo apt install ffmpeg
+./install_all.sh
 ```
 
-**IndexTTS2 安装参考**：
-- 官方仓库：[https://github.com/index-tts/index-tts](https://github.com/index-tts/index-tts)
-- 请按照官方 README 中的安装说明完成 IndexTTS2 的安装
-- 确保 IndexTTS2 安装完成后，其虚拟环境位于 `index-tts/.venv`
+**手动安装**
+
+如果您希望手动控制安装过程，请参考：[安装指南](docs/INSTALL.md)
 
 详细安装步骤请参考：[安装指南](docs/INSTALL.md)
 
