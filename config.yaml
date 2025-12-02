@@ -68,7 +68,7 @@ speaker_diarization:
 
 # 按人音轨配置（步骤3）
 speaker_tracks:
-  enabled: true
+  enabled: false  # 默认禁用多说话人分离
   compact_concat: true
   min_gap_merge_ms: 100
   similarity_merge:
@@ -95,7 +95,7 @@ defaults:
 translation:
   source_language: "zh"
   target_language: "en"
-  model: "qwen3-max-2025-09-23"  # 支持的其他选项: qwen-plus, qwen-max, qwen-turbo
+  model: "qwen-plus-2025-07-14"  # 支持的其他选项: qwen-plus, qwen-max, qwen-turbo
   
   # 重试策略配置
   retry_strategy: "adaptive"  # "simple" 或 "adaptive"，默认 "adaptive"

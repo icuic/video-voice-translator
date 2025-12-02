@@ -48,13 +48,32 @@ class Step2AudioSeparation(BaseStep):
             from ..audio_separator import AudioSeparator
             audio_separator = AudioSeparator(self.config)
         
+        # 获取全局进度回调
+        progress_callback = getattr(self.context, 'progress_callback', None)
+        
+        # 定义进度回调包装函数
+        def separation_progress_callback(progress: float, message: str):
+            """音频分离进度回调包装"""
+            if progress_callback:
+                # 步骤2的索引：如果跳过步骤3则为1，否则为2
+                # 这里我们使用步骤名称来匹配，让调用方自动计算索引
+                progress_callback(2, "步骤2: 音频分离", progress, message, 0, 0)
+        
         # 分离音频
         vocals_path = self.output_manager.get_file_path(StepNumbers.STEP_2, 'vocals')
         accompaniment_path = self.output_manager.get_file_path(StepNumbers.STEP_2, 'accompaniment')
         
+        # 报告开始进度
+        if progress_callback:
+            progress_callback(2, "步骤2: 音频分离", 0, "开始音频分离...", 0, 0)
+        
         separation_result = audio_separator.separate_audio_with_paths(
-            audio_path, vocals_path, accompaniment_path
+            audio_path, vocals_path, accompaniment_path, separation_progress_callback
         )
+        
+        # 报告完成进度
+        if progress_callback and separation_result.get("success"):
+            progress_callback(2, "步骤2: 音频分离", 100, "音频分离完成", 0, 0)
         
         if not separation_result.get("success"):
             return {

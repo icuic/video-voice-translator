@@ -89,7 +89,8 @@ class AudioSeparator:
             raise
     
     
-    def separate_audio_with_paths(self, audio_path: str, vocals_path: str, accompaniment_path: str) -> Dict[str, Any]:
+    def separate_audio_with_paths(self, audio_path: str, vocals_path: str, accompaniment_path: str,
+                                 progress_callback: Optional[callable] = None) -> Dict[str, Any]:
         """
         分离音频到指定路径
         
@@ -97,6 +98,7 @@ class AudioSeparator:
             audio_path: 输入音频文件路径
             vocals_path: 人声输出路径
             accompaniment_path: 背景音乐输出路径
+            progress_callback: 进度回调函数，接收 (progress: float, message: str)
             
         Returns:
             分离结果字典
@@ -118,7 +120,7 @@ class AudioSeparator:
             # 执行Demucs分离
             input_name = Path(audio_path).stem
             safe_name = safe_filename(input_name)
-            self._run_demucs_separation(audio_path, temp_output_dir, safe_name)
+            self._run_demucs_separation(audio_path, temp_output_dir, safe_name, progress_callback)
             
             # 查找分离后的文件
             # Demucs 生成的目录名可能不是基于输入文件名，需要动态查找
@@ -352,7 +354,8 @@ class AudioSeparator:
                 "recommendation": "无法评估分离质量"
             }
     
-    def _run_demucs_separation(self, audio_path: str, output_dir: str, safe_name: str):
+    def _run_demucs_separation(self, audio_path: str, output_dir: str, safe_name: str, 
+                               progress_callback: Optional[callable] = None):
         """
         运行Demucs分离
         
@@ -360,6 +363,7 @@ class AudioSeparator:
             audio_path: 输入音频文件路径
             output_dir: 输出目录
             safe_name: 安全的文件名
+            progress_callback: 进度回调函数，接收 (progress: float, message: str)
         """
         try:
             # 清理GPU缓存，为Demucs释放内存
@@ -397,6 +401,7 @@ class AudioSeparator:
             # 实时读取并记录输出
             output_lines = []
             last_log_time = 0
+            last_progress = 0
             
             for line in process.stdout:
                 line = line.rstrip()
@@ -406,6 +411,15 @@ class AudioSeparator:
                     clean_line = re.sub(r'\r', '', clean_line)  # 移除回车符
                     
                     if clean_line.strip():
+                        # 解析进度条：格式如 "69%|████...| 280.8/409.5 [00:08<00:03, 38.23seconds/s]"
+                        progress_match = re.search(r'(\d+)%', clean_line)
+                        if progress_match and progress_callback:
+                            progress = int(progress_match.group(1))
+                            # 只在进度变化时调用回调，避免过于频繁
+                            if progress != last_progress:
+                                progress_callback(progress, f"音频分离中 ({progress}%)")
+                                last_progress = progress
+                        
                         # 对于进度条，每0.5秒记录一次，避免日志过多
                         current_time = time.time()
                         if 'Downloading' in clean_line or '%' in clean_line or '|' in clean_line:

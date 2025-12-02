@@ -30,7 +30,7 @@ from src.pipeline.step9_video_synthesis import Step9VideoSynthesis
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 
-def translate_media(input_path, source_lang='auto', target_lang='auto', output_dir='data/outputs', voice_model='index-tts2', single_speaker=False, pause_after_step4=False, pause_after_step5=False, continue_from_step5=False, continue_from_step6=False, task_dir=None, webui_mode=False):
+def translate_media(input_path, source_lang='auto', target_lang='auto', output_dir='data/outputs', voice_model='index-tts2', single_speaker=False, pause_after_step4=False, pause_after_step5=False, continue_from_step5=False, continue_from_step6=False, task_dir=None, webui_mode=False, progress_callback=None):
     """翻译任意视频或音频文件 - 使用新的步骤文件架构"""
     # 记录总开始时间
     total_start_time = time.time()
@@ -112,7 +112,8 @@ def translate_media(input_path, source_lang='auto', target_lang='auto', output_d
         output_manager=output_manager,
         stats=stats,
         pause_after_step4=pause_after_step4,
-        pause_after_step5=pause_after_step5
+        pause_after_step5=pause_after_step5,
+        progress_callback=progress_callback
     )
     
     try:
@@ -240,35 +241,98 @@ def translate_media(input_path, source_lang='auto', target_lang='auto', output_d
             context.translated_segments = translated_segments
             print(f'✅ 已加载 {len(translated_segments)} 个翻译片段')
         
-        # 执行9个步骤
+        # 构建步骤列表（根据条件动态包含/排除步骤3）
+        # 检查是否应该跳过步骤3（多说话人处理）
+        skip_step3 = single_speaker or not config.get("speaker_tracks", {}).get("enabled", False)
+        
         steps = [
             ("步骤1: 音频提取", Step1AudioExtraction),
             ("步骤2: 音频分离", Step2AudioSeparation),
-            ("步骤3: 多说话人处理", Step3MultiSpeaker),
+        ]
+        
+        # 只有在不跳过时才添加步骤3
+        if not skip_step3:
+            steps.append(("步骤3: 多说话人处理", Step3MultiSpeaker))
+        
+        # 添加后续步骤
+        steps.extend([
             ("步骤4: 语音识别", Step4SpeechRecognition),
             ("步骤5: 文本翻译", Step5TextTranslation),
             ("步骤6: 参考音频提取", Step6ReferenceAudio),
             ("步骤7: 音色克隆", Step7VoiceCloning),
             ("步骤8: 音频合并", Step8AudioMerging),
             ("步骤9: 视频合成", Step9VideoSynthesis),
-        ]
+        ])
         
-        # 如果从步骤5或步骤6继续，跳过前面的步骤
+        # 计算总步骤数和每个步骤的进度百分比
+        total_steps = len(steps)
+        step_progress = 100.0 / total_steps if total_steps > 0 else 0
+        
+        # 如果从步骤5或步骤6继续，需要调整起始索引
+        # 注意：如果跳过了步骤3，步骤4的索引会变化
         if continue_from_step5:
-            start_index = 4  # 从步骤5开始（索引4）
+            # 从步骤5开始（原索引4，如果跳过步骤3则索引变为3）
+            start_index = 3 if skip_step3 else 4
         elif continue_from_step6:
-            start_index = 5  # 从步骤6开始（索引5）
+            # 从步骤6开始（原索引5，如果跳过步骤3则索引变为4）
+            start_index = 4 if skip_step3 else 5
         else:
             start_index = 0
         
+        # 创建包装的进度回调，将步骤内相对进度转换为全局进度
+        def wrapped_progress_callback(step_index: int, step_name: str, step_relative_progress: float,
+                                     message: str = "", current_segment: int = 0, total_segments: int = 0):
+            """包装进度回调，将步骤内相对进度转换为全局进度"""
+            if progress_callback:
+                # 从步骤名称推断实际步骤索引（因为step_index可能不准确，特别是跳过步骤3后）
+                actual_step_index = -1
+                for idx, (name, _) in enumerate(steps):
+                    # 匹配步骤名称（支持部分匹配）
+                    if step_name in name or name in step_name:
+                        actual_step_index = idx
+                        break
+
+                # 如果找不到匹配，使用step_index-1作为后备
+                if actual_step_index < 0:
+                    actual_step_index = step_index - 1
+                    if actual_step_index < 0 or actual_step_index >= len(steps):
+                        actual_step_index = 0
+
+                # 计算全局进度：
+                # 已完成步骤的进度 + 当前步骤的相对进度（确保进度单调递增）
+                completed_steps_progress = actual_step_index * step_progress
+                current_step_progress = (step_relative_progress / 100.0) * step_progress
+                global_progress = completed_steps_progress + current_step_progress
+
+                # 确保进度不低于该步骤的起始点
+                min_progress_for_step = actual_step_index * step_progress
+                global_progress = max(global_progress, min_progress_for_step)
+
+                # 调用原始进度回调
+                progress_callback(step_index, step_name, global_progress, message, current_segment, total_segments)
+        
+        # 将包装的进度回调设置到context中
+        context.progress_callback = wrapped_progress_callback
+        
         for i, (step_name, step_class) in enumerate(steps[start_index:], start=start_index):
             print(f'\n{step_name}...')
+
+            # 开始步骤时更新进度（使用动态计算的进度百分比）
+            if progress_callback:
+                progress_pct = i * step_progress  # 步骤开始时的进度（步骤的起始点）
+                progress_callback(i + 1, step_name, progress_pct, f"{step_name}开始...", 0, 0)
+
             step = step_class(context)
             result = step.run_with_stats(step_name)
             
             if not result.get("success", False):
                 error_msg = result.get("error", "未知错误")
                 print(f'❌ {step_name}失败: {error_msg}')
+
+                # 失败时更新进度回调
+                if progress_callback:
+                    progress_callback(i + 1, step_name, 0, f"{step_name}失败: {error_msg}")
+
                 return {
                     "success": False,
                     "error": f"{step_name}失败: {error_msg}",
@@ -279,8 +343,15 @@ def translate_media(input_path, source_lang='auto', target_lang='auto', output_d
             if result.get("skipped", False):
                 print(f'⏭️  {step_name}已跳过: {result.get("reason", "")}')
             
+                # 跳过时更新进度回调（使用动态计算的进度百分比）
+                if progress_callback:
+                    progress_pct = (i + 1) * step_progress
+                    progress_callback(i + 1, step_name, progress_pct, f"{step_name}已跳过")
+
             # 步骤4完成后，如果设置了暂停，则暂停并等待用户编辑分段
-            if i == 3 and pause_after_step4:  # 步骤4是索引3
+            # 步骤4的索引：如果跳过步骤3则为2，否则为3
+            step4_index = 2 if skip_step3 else 3
+            if i == step4_index and pause_after_step4:
                 print('\n' + '=' * 60)
                 print('⏸️  步骤4完成，已暂停以允许编辑分段')
                 print('=' * 60)
@@ -363,7 +434,9 @@ def translate_media(input_path, source_lang='auto', target_lang='auto', output_d
                     }
             
             # 步骤5完成后，如果设置了暂停，则暂停并等待用户编辑
-            if i == 4 and pause_after_step5:  # 步骤5是索引4
+            # 步骤5的索引：如果跳过步骤3则为3，否则为4
+            step5_index = 3 if skip_step3 else 4
+            if i == step5_index and pause_after_step5:
                 print('\n' + '=' * 60)
                 print('⏸️  步骤5完成，已暂停以允许编辑翻译结果')
                 print('=' * 60)

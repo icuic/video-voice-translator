@@ -56,6 +56,7 @@ class Step9VideoSynthesis(BaseStep):
             accompaniment_path = self.output_manager.get_file_path(StepNumbers.STEP_2, "accompaniment")
             if os.path.exists(accompaniment_path):
                 # 三个输入：原始视频、中文配音、背景音乐
+                # 先降低背景音乐音量到30%，然后混合配音和背景音乐
                 cmd = [
                     'ffmpeg',
                     '-i', original_input_path,        # 原始视频
@@ -63,13 +64,13 @@ class Step9VideoSynthesis(BaseStep):
                     '-i', accompaniment_path,          # 背景音乐
                     '-c:v', 'copy',
                     '-c:a', 'aac',
-                    '-filter_complex', '[1:a][2:a]amix=inputs=2:duration=first[aout]',  # 混合中文配音和背景音乐
+                    '-filter_complex', '[2:a]volume=0.3[accompaniment_low];[1:a][accompaniment_low]amix=inputs=2:duration=first[aout]',  # 降低背景音乐音量后混合
                     '-map', '0:v:0',                  # 使用原始视频
                     '-map', '[aout]',                  # 使用混合后的音频
                     '-y',
                     final_video_path
                 ]
-                self.logger.info(f'使用背景音乐: {accompaniment_path}')
+                self.logger.info(f'使用背景音乐（已降低到30%音量）: {accompaniment_path}')
             else:
                 # 只有两个输入：原始视频、中文配音
                 cmd = [

@@ -26,7 +26,8 @@ class EnhancedMediaProcessor(MediaProcessor):
 
     def process_with_output_manager(self, input_path: str, output_manager: OutputManager,
                                    language: Optional[str] = None,
-                                   force_separation: bool = False) -> Dict[str, Any]:
+                                   force_separation: bool = False,
+                                   progress_callback: Optional[callable] = None) -> Dict[str, Any]:
         self.logger.info(f"开始增强处理: {input_path}")
 
         if not validate_file_path(input_path):
@@ -38,7 +39,7 @@ class EnhancedMediaProcessor(MediaProcessor):
         try:
             self.logger.info("执行基础媒体处理...")
             audio_path = output_manager.get_file_path(StepNumbers.STEP_1, "audio")
-            audio_result = self.audio_extractor.extract(input_path, audio_path)
+            audio_result = self.audio_extractor.extract(input_path, audio_path, progress_callback)
             output_manager.log(f"步骤1完成: 音频已提取到 {audio_path}")
 
             separation_needed = False

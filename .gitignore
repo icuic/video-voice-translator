@@ -95,3 +95,12 @@ Desktop.ini
 *.bak
 *.backup
 *~
+
+# 前端相关
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# React/Vite构建产物
+*.tsbuildinfo
+.vite

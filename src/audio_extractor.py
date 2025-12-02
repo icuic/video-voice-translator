@@ -32,39 +32,44 @@ class AudioExtractor:
         self.channels = self.audio_config.get("channels", 1)
         self.bit_depth = self.audio_config.get("bit_depth", 16)
     
-    def extract(self, input_path: str, output_path: str) -> Dict[str, Any]:
+    def extract(self, input_path: str, output_path: str,
+               progress_callback: Optional[callable] = None) -> Dict[str, Any]:
         """
         从输入文件提取音频
-        
+
         Args:
             input_path: 输入文件路径（视频或音频）
             output_path: 输出音频文件路径
-            
+            progress_callback: 进度回调函数
+
         Returns:
             提取结果字典
         """
         if not validate_file_path(input_path):
             raise FileNotFoundError(f"输入文件不存在: {input_path}")
-        
+
         self.logger.info(f"开始音频提取: {input_path} -> {output_path}")
-        
+
         # 创建输出目录
         create_output_dir(os.path.dirname(output_path))
-        
+
         # 检查输入文件类型
         input_ext = Path(input_path).suffix.lower().lstrip('.')
-        
+        progress_reported = False
+
         try:
             if self._is_audio_file(input_ext):
                 # 如果是音频文件，直接转换格式
                 result = self._convert_audio(input_path, output_path)
             else:
                 # 如果是视频文件，提取音频
-                result = self._extract_audio_from_video(input_path, output_path)
-            
+                result = self._extract_audio_from_video(input_path, output_path, progress_callback)
+                progress_reported = progress_callback is not None
+
+            result["progress_reported"] = progress_reported
             self.logger.info("音频提取完成")
             return result
-            
+
         except Exception as e:
             self.logger.error(f"音频提取失败: {e}")
             raise
@@ -74,24 +79,35 @@ class AudioExtractor:
         audio_formats = ["mp3", "wav", "flac", "aac", "ogg", "m4a"]
         return file_ext in audio_formats
     
-    def _extract_audio_from_video(self, video_path: str, output_path: str) -> Dict[str, Any]:
+    def _extract_audio_from_video(self, video_path: str, output_path: str,
+                                 progress_callback: Optional[callable] = None) -> Dict[str, Any]:
         """
         从视频文件提取音频
-        
+
         Args:
             video_path: 视频文件路径
             output_path: 输出音频文件路径
-            
+            progress_callback: 进度回调函数
+
         Returns:
             提取结果字典
         """
         try:
+            # 获取输入视频时长
+            duration = 0
+            try:
+                probe = ffmpeg.probe(video_path)
+                duration = float(probe['format']['duration'])
+                self.logger.info(f"视频时长: {duration:.1f}秒")
+            except Exception as e:
+                self.logger.warning(f"无法获取视频时长: {e}")
+
             # 构建FFmpeg命令
             input_stream = ffmpeg.input(video_path)
-            
+
             # 音频处理参数
             audio_stream = input_stream.audio
-            
+
             # 设置输出参数
             output_stream = ffmpeg.output(
                 audio_stream,
@@ -101,27 +117,93 @@ class AudioExtractor:
                 ac=self.channels,     # 声道数
                 f=self.format         # 输出格式
             )
-            
-            # 执行转换
-            ffmpeg.run(output_stream, overwrite_output=True, quiet=True)
-            
+
+            # 执行转换，捕获进度信息
+            if progress_callback and duration > 0:
+                self._run_ffmpeg_with_progress(output_stream, duration, progress_callback)
+            else:
+                # 不显示进度时使用安静模式
+                ffmpeg.run(output_stream, overwrite_output=True, quiet=True)
+
             # 获取输出文件信息
             output_size = os.path.getsize(output_path)
-            
+
             return {
                 "success": True,
                 "input_path": video_path,
                 "output_path": output_path,
                 "output_size": output_size,
+                "duration": duration,
                 "sample_rate": self.sample_rate,
                 "channels": self.channels,
                 "format": self.format,
                 "extraction_type": "video_to_audio"
             }
-            
+
         except ffmpeg.Error as e:
             self.logger.error(f"FFmpeg错误: {e}")
             raise RuntimeError(f"音频提取失败: {e}")
+
+    def _run_ffmpeg_with_progress(self, output_stream, duration: float, progress_callback):
+        """
+        运行 FFmpeg 并实时报告进度
+
+        Args:
+            output_stream: FFmpeg 输出流
+            duration: 视频总时长（秒）
+            progress_callback: 进度回调函数
+        """
+        import subprocess
+        import re
+        import time
+
+        # 获取 FFmpeg 命令
+        cmd = ffmpeg.compile(output_stream, overwrite_output=True)
+
+        # 运行 FFmpeg，捕获 stderr（进度信息输出到 stderr）
+        process = subprocess.Popen(
+            cmd,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+            universal_newlines=True
+        )
+
+        last_progress = 0
+        last_update_time = 0
+
+        # 实时读取 stderr 输出
+        while True:
+            line = process.stderr.readline()
+            if not line and process.poll() is not None:
+                break
+
+            if line:
+                line = line.strip()
+
+                # 解析进度信息：time=00:01:23.45
+                time_match = re.search(r'time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})', line)
+                if time_match:
+                    hours, minutes, seconds, centiseconds = map(int, time_match.groups())
+                    current_time = hours * 3600 + minutes * 60 + seconds + centiseconds / 100
+
+                    # 计算进度百分比
+                    if duration > 0:
+                        progress = min((current_time / duration) * 100, 100)
+
+                        # 只在进度变化且时间间隔足够时更新（避免过于频繁）
+                        current_time_sec = time.time()
+                        if progress != last_progress and current_time_sec - last_update_time > 0.5:
+                            progress_callback(progress, ".1f")
+                            last_progress = progress
+                            last_update_time = current_time_sec
+
+        # 等待进程完成
+        return_code = process.wait()
+        if return_code != 0:
+            # 读取剩余的错误输出
+            error_output = process.stderr.read()
+            raise RuntimeError(f"FFmpeg 失败，返回码: {return_code}, 错误: {error_output}")
     
     def _convert_audio(self, input_path: str, output_path: str) -> Dict[str, Any]:
         """
@@ -214,33 +296,26 @@ class AudioExtractor:
         except Exception:
             return False
     
-    def extract_with_progress(self, input_path: str, output_path: str, 
+    def extract_with_progress(self, input_path: str, output_path: str,
                             progress_callback: Optional[callable] = None) -> Dict[str, Any]:
         """
         带进度回调的音频提取
-        
+
         Args:
             input_path: 输入文件路径
             output_path: 输出文件路径
             progress_callback: 进度回调函数
-            
+
         Returns:
             提取结果字典
         """
-        # 获取输入文件时长
-        try:
-            probe = ffmpeg.probe(input_path)
-            duration = float(probe['format']['duration'])
-        except Exception:
-            duration = 0
-        
         # 执行提取
-        result = self.extract(input_path, output_path)
-        
-        # 调用进度回调
-        if progress_callback:
+        result = self.extract(input_path, output_path, progress_callback)
+
+        # 确保完成时调用100%进度
+        if progress_callback and not result.get("progress_reported", False):
             progress_callback(100.0, "音频提取完成")
-        
+
         return result
 
 

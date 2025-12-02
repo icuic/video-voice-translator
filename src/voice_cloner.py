@@ -54,7 +54,15 @@ class VoiceCloner:
         
         # 音色克隆配置
         self.cloning_config = config.get("voice_cloning", {})
-        self.model_path = self.cloning_config.get("model_path", "./models/indexTTS2")
+        self.model_path = self.cloning_config.get("model_path", "./index-tts")
+
+        # 确保model_path是绝对路径
+        if not self.model_path.startswith('/'):
+            import os
+            # 获取项目根目录（src目录的父目录）
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            self.model_path = os.path.join(project_root, self.model_path.lstrip('./'))
+
         self.device = self.cloning_config.get("device", "cpu")
         self.sample_rate = self.cloning_config.get("sample_rate", 16000)
         self.max_text_tokens = self.cloning_config.get("max_text_tokens", 600)
@@ -168,7 +176,7 @@ class VoiceCloner:
                     "processing_info": {
                         "text_length": len(text),
                         "model_path": self.model_path,
-                        "device": self.device
+                        "device": self._model.device if self._model else self.device
                     }
                 }
                 self.logger.info(f"音色克隆完成: {output_path}")
@@ -351,7 +359,7 @@ class VoiceCloner:
                 "cloning_results": cloning_results,
                 "processing_info": {
                     "model_path": self.model_path,
-                    "device": self.device,
+                    "device": self._model.device if self._model else self.device,
                     "sample_rate": self.sample_rate
                 }
             }
@@ -371,7 +379,7 @@ class VoiceCloner:
             }
     
     def clone_segments_parallel(self, segments: List[Dict[str, Any]], 
-                               output_manager: OutputManager) -> Dict[str, Any]:
+                               output_manager: OutputManager, progress_callback=None) -> Dict[str, Any]:
         """
         并行克隆多个音频段落
         
@@ -425,15 +433,24 @@ class VoiceCloner:
                         future_to_segment[future] = (i, segment)
                     
                     # 收集结果
+                    completed_count = 0
                     for future in as_completed(future_to_segment):
                         i, segment = future_to_segment[future]
                         try:
                             result = future.result()
                             cloning_results.append(result)
+                            completed_count += 1
                             
                             if result["success"]:
                                 cloned_segments.append(result["cloned_segment"])
                                 output_manager.log(f"段落 {i+1} 并行克隆成功")
+
+                                # 进度回调：更新当前片段进度
+                                # 注意：progress_pct是步骤内的相对进度（0-100%），由调用方转换为全局进度
+                                if progress_callback:
+                                    step_relative_progress = (completed_count / len(segments)) * 100 if len(segments) > 0 else 0
+                                    # 传递相对进度，让上层回调函数处理步骤索引
+                                    progress_callback(step_relative_progress, f"音色克隆中 ({completed_count}/{len(segments)})", completed_count, len(segments))
                             else:
                                 self.logger.error(f"段落 {i+1} 并行克隆失败: {result.get('error', '未知错误')}")
                                 output_manager.log(f"段落 {i+1} 并行克隆失败: {result.get('error', '未知错误')}")
@@ -481,6 +498,12 @@ class VoiceCloner:
                     else:
                         self.logger.error(f"段落 {i+1} 克隆失败: {result.get('error', '未知错误')}")
                         output_manager.log(f"段落 {i+1} 克隆失败: {result.get('error', '未知错误')}")
+                    
+                    # 进度回调：更新当前片段进度
+                    if progress_callback:
+                        completed_count = i + 1
+                        step_relative_progress = (completed_count / len(segments)) * 100 if len(segments) > 0 else 0
+                        progress_callback(step_relative_progress, f"音色克隆中 ({completed_count}/{len(segments)})", completed_count, len(segments))
             
             # 清理GPU缓存
             self.gpu_monitor.clear_cache()
@@ -500,7 +523,7 @@ class VoiceCloner:
                 "cloning_results": cloning_results,
                 "processing_info": {
                     "model_path": self.model_path,
-                    "device": self.device,
+                    "device": self._model.device if self._model else self.device,
                     "sample_rate": self.sample_rate,
                     "parallel_workers": actual_workers,
                     "processing_time": processing_time,
@@ -845,7 +868,7 @@ tts.infer(spk_audio_prompt='{reference_audio}', text='{text}', output_path='{out
             "success_rate": successful_clonings / total_segments if total_segments > 0 else 0,
             "average_text_length": sum(text_lengths) / len(text_lengths) if text_lengths else 0,
             "model_path": self.model_path,
-            "device": self.device,
+            "device": self._model.device if self._model else self.device,
             "sample_rate": self.sample_rate
         }
         

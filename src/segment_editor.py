@@ -178,10 +178,21 @@ def normalize_segment(segment: Dict[str, Any], all_words: Optional[List[Dict[str
         segment['words'] = words
     
     # 根据单词时间戳重新计算分段时间戳
+    # 注意：只有在分段没有明确设置时间戳时才根据words重新计算
+    # 这样可以保留用户手动编辑的时间戳
     if words:
         word_start, word_end = calculate_segment_timestamps_from_words(words)
-        segment['start'] = word_start
-        segment['end'] = word_end
+        # 如果分段的时间戳与单词时间戳差异很大（>0.1秒），说明用户可能手动编辑过
+        # 在这种情况下，保留用户编辑的时间戳，不覆盖
+        existing_start = segment.get('start', 0)
+        existing_end = segment.get('end', 0)
+        
+        # 如果时间戳差异不大，使用单词时间戳（更精确）
+        # 如果差异很大，保留用户编辑的时间戳
+        if abs(word_start - existing_start) < 0.1 and abs(word_end - existing_end) < 0.1:
+            segment['start'] = word_start
+            segment['end'] = word_end
+        # 否则保留用户编辑的时间戳
         
         # 只有在segment没有text字段或text为空时，才根据单词重建文本
         # 这样可以保留用户编辑的文本内容
@@ -370,76 +381,55 @@ def split_segment(
             # 如果没找到，在最后一个单词之后拆分
             split_idx = len(words)
     elif split_text_position is not None:
-        # 根据文本位置拆分（基于完整文本，包括空格）
+        # 根据文本位置拆分（直接基于字符位置，不依赖单词边界）
         text = segment.get('text', '')
         if split_text_position < 0:
             split_text_position = 0
         if split_text_position >= len(text):
             split_text_position = len(text) // 2
         
-        # 在完整文本中查找每个单词的位置，找到包含 split_text_position 的单词
+        # 找到最接近 split_text_position 的单词边界
+        # 优先选择在单词之间的空格位置拆分
         split_idx = None
-        search_start = 0
-        prev_word_end = 0  # 记录前一个单词的结束位置
+        prev_word_end = 0
         
         for i, word in enumerate(words):
-            word_text = word.get('word', '')
+            word_text = word.get('word', '').strip()  # 移除单词前后的空格
             if not word_text:
                 continue
             
-            # 在完整文本中查找当前单词的位置
-            word_start = text.find(word_text, search_start)
+            # 在文本中查找单词（忽略前导空格）
+            word_start = text.find(word_text, prev_word_end)
             if word_start == -1:
                 # 如果找不到，尝试忽略大小写
-                word_start = text.lower().find(word_text.lower(), search_start)
+                word_start = text.lower().find(word_text.lower(), prev_word_end)
                 if word_start == -1:
-                    # 如果还是找不到，跳过这个单词
                     continue
             
             word_end = word_start + len(word_text)
             
-            # 检查 split_text_position 是否在当前单词的范围内
-            # 注意：如果位置正好等于单词开始位置，应该在前一个单词之后拆分
-            if word_start < split_text_position <= word_end:
-                # 位置在单词中间或结束位置，在该单词之后拆分
-                split_idx = i + 1
-                break
-            elif split_text_position == word_start:
-                # 位置正好等于单词开始位置，在前一个单词之后拆分
-                if i > 0:
+            # 检查光标位置是否在当前单词范围内
+            if word_start <= split_text_position < word_end:
+                # 光标在单词内部，检查是否更接近单词开始还是结束
+                if split_text_position - word_start < word_end - split_text_position:
+                    # 更接近单词开始，在前一个单词之后拆分
                     split_idx = i
                 else:
-                    split_idx = 1  # 如果第一个单词之前，在第一个单词之后拆分
+                    # 更接近单词结束，在当前单词之后拆分
+                    split_idx = i + 1
                 break
             elif split_text_position < word_start:
-                # 位置在当前单词之前，检查是否在前一个单词之后（空格位置）
+                # 光标在单词之前，检查是否在单词间空格中
                 if prev_word_end <= split_text_position < word_start:
-                    # 位置在两个单词之间的空格位置，在前一个单词之后拆分
-                    if i > 0:
+                    # 在单词间空格中，在前一个单词之后拆分
                         split_idx = i
-                    else:
-                        split_idx = 1  # 如果第一个单词之前，在第一个单词之后拆分
-                else:
-                    # 位置更靠前，在前一个单词之后拆分
-                    if i > 0:
-                        split_idx = i
-                    else:
-                        split_idx = 1
                 break
             
-            # 更新前一个单词的结束位置
             prev_word_end = word_end
-            # 更新搜索起始位置，避免重复查找
-            search_start = word_end
         
+        # 如果没找到合适的位置，默认在中间拆分
         if split_idx is None:
-            # 如果没找到，检查是否在最后一个单词之后
-            if prev_word_end <= split_text_position:
-                # 在最后一个单词之后拆分
-                split_idx = len(words)
-            else:
-                # 如果位置超出范围，在最后一个单词之后拆分
-                split_idx = len(words)
+            split_idx = len(words) // 2
     else:
         # 默认在中间拆分
         split_idx = len(words) // 2
@@ -494,10 +484,15 @@ def split_segment(
         segment_first['speaker_id'] = segment['speaker_id']
         segment_second['speaker_id'] = segment['speaker_id']
     
+    # 保留技术字段
     for key in ['id', 'seek', 'tokens', 'temperature', 'avg_logprob', 'compression_ratio', 'no_speech_prob']:
         if key in segment:
             segment_first[key] = segment[key]
             segment_second[key] = segment[key]
+    
+    # 保留用户数据字段（这些字段会在服务层进一步处理）
+    # translated_text、reference_audio_path 等会在服务层继承
+    # audio_path 和 cloned_audio_path 会在服务层设置为 None
     
     return segment_first, segment_second
 

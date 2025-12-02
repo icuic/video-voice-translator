@@ -682,10 +682,12 @@ class TimestampedAudioMerger:
         
         # 基于观察，合成音频的典型音量约为-24.5dB，需要调整到与参考音频相同
         # 计算音量调整值，让输出音频与参考音频音量接近
-        target_volume = reference_volume  # 目标音量与参考音频相同
+        # 额外增加3dB增益，让人声音量更明显
+        voice_gain_db = 3.0  # 额外增加3dB音量
+        target_volume = reference_volume + voice_gain_db  # 目标音量比参考音频大3dB
         current_volume = -24.5  # 合成音频的典型音量（基于观察）
         volume_adjustment = target_volume - current_volume
-        self.logger.info(f"音量调整计算: 目标={target_volume:.2f}dB, 当前={current_volume:.2f}dB, 调整={volume_adjustment:.2f}dB")
+        self.logger.info(f"音量调整计算: 目标={target_volume:.2f}dB (参考={reference_volume:.2f}dB + 增益={voice_gain_db}dB), 当前={current_volume:.2f}dB, 调整={volume_adjustment:.2f}dB")
         
         # 构建FFmpeg命令，使用amix进行时间同步混合
         cmd = ['ffmpeg']

@@ -25,7 +25,8 @@ class ProcessingContext:
                  output_manager: OutputManager,
                  stats: PerformanceStats,
                  pause_after_step4: bool = False,
-                 pause_after_step5: bool = False):
+                 pause_after_step5: bool = False,
+                 progress_callback: Optional[callable] = None):
         """
         初始化处理上下文
         
@@ -53,6 +54,7 @@ class ProcessingContext:
         self.stats = stats
         self.pause_after_step4 = pause_after_step4
         self.pause_after_step5 = pause_after_step5
+        self.progress_callback = progress_callback
         
         # 任务目录
         self.task_dir = output_manager.task_dir

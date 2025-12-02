@@ -51,9 +51,14 @@ class Step5TextTranslation(BaseStep):
         # 翻译segments
         from ..text_translator import TextTranslator
         text_translator = TextTranslator(self.config)
+        
+        # 获取全局进度回调
+        progress_callback = getattr(self.context, 'progress_callback', None)
+        
         translation_result = text_translator.translate_segments_with_output_manager(
             segments, 
-            self.output_manager
+            self.output_manager,
+            progress_callback
         )
         
         if not translation_result.get("success"):

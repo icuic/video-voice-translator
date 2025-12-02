@@ -45,33 +45,30 @@ class TextTranslator:
         self._init_translation_engine()
     
     def _init_translation_engine(self):
-        """初始化翻译引擎（仅支持Qwen）"""
+        """初始化翻译引擎"""
         try:
-            if self.translation_model.startswith("qwen"):
-                self.logger.info(f"使用 {self.translation_model} 大模型翻译引擎")
-                try:
-                    from openai import OpenAI
-                    import os
-                    # 从环境变量读取API密钥
-                    api_key = os.getenv("DASHSCOPE_API_KEY")
-                    if not api_key:
-                        raise ValueError(
-                            "未设置DASHSCOPE_API_KEY环境变量。"
-                            "请通过以下方式设置：\n"
-                            "  export DASHSCOPE_API_KEY='your-api-key'\n"
-                            "或在代码运行前设置环境变量。"
-                            "获取API密钥请访问：https://dashscope.console.aliyun.com/"
-                        )
-                    self.translator = OpenAI(
-                        api_key=api_key,
-                        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            self.logger.info(f"使用 {self.translation_model} 大模型翻译引擎")
+            try:
+                from openai import OpenAI
+                import os
+                # 从环境变量读取API密钥
+                api_key = os.getenv("DASHSCOPE_API_KEY")
+                if not api_key:
+                    raise ValueError(
+                        "未设置DASHSCOPE_API_KEY环境变量。"
+                        "请通过以下方式设置：\n"
+                        "  export DASHSCOPE_API_KEY='your-api-key'\n"
+                        "或在代码运行前设置环境变量。"
+                        "获取API密钥请访问：https://dashscope.console.aliyun.com/"
                     )
-                    self.logger.info(f"{self.translation_model}翻译引擎初始化成功")
-                except Exception as e:
-                    self.logger.error(f"{self.translation_model}翻译引擎初始化失败: {e}")
-                    self.translator = None
-            else:
-                self.logger.error(f"不支持的翻译模型: {self.translation_model}，仅支持qwen系列")
+                self.translator = OpenAI(
+                    api_key=api_key,
+                    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    timeout=300.0,  # 增加超时时间到5分钟，处理大批量翻译
+                )
+                self.logger.info(f"{self.translation_model}翻译引擎初始化成功")
+            except Exception as e:
+                self.logger.error(f"{self.translation_model}翻译引擎初始化失败: {e}")
                 self.translator = None
                 
         except Exception as e:
@@ -139,14 +136,14 @@ class TextTranslator:
         
         try:
             # 使用批量翻译方法
-            if self.translation_model == "qwen" and self.translator is not None:
-                # 使用Qwen批量翻译
+            if self.translator is not None:
+                # 使用批量翻译
                 result = self._batch_translate_with_qwen(segments, output_dir, output_manager)
             else:
-                # 不支持其他翻译模型，返回错误
+                # 翻译引擎未初始化，返回错误
                 return {
                     "success": False,
-                    "error": f"不支持的翻译模型: {self.translation_model}",
+                    "error": f"翻译引擎未初始化，请检查配置和API密钥",
                     "translated_segments": []
                 }
             
@@ -167,13 +164,15 @@ class TextTranslator:
             }
     
     def translate_segments_with_output_manager(self, segments: List[Dict[str, Any]], 
-                                             output_manager: OutputManager) -> Dict[str, Any]:
+                                             output_manager: OutputManager,
+                                             progress_callback=None) -> Dict[str, Any]:
         """
         使用OutputManager翻译多个音频段落
         
         Args:
             segments: 音频段落列表
             output_manager: 输出管理器实例
+            progress_callback: 进度回调函数，格式: (step_index, step_name, progress_pct, message, current_segment, total_segments)
             
         Returns:
             翻译结果字典
@@ -241,9 +240,13 @@ class TextTranslator:
         # 执行实际翻译
         output_manager.log(f"步骤5开始: 翻译 {len(segments)} 个段落")
         
+        # 报告开始进度
+        if progress_callback:
+            progress_callback(5, "步骤5: 文本翻译", 0, f"开始翻译 {len(segments)} 个段落...", 0, len(segments))
+        
         try:
             # 使用批量翻译
-            result = self._batch_translate_with_qwen(segments, output_manager.task_dir, output_manager)
+            result = self._batch_translate_with_qwen(segments, output_manager.task_dir, output_manager, progress_callback)
             
             if not result["success"]:
                 output_manager.log(f"步骤5失败: {result.get('error', '未知错误')}")
@@ -281,7 +284,8 @@ class TextTranslator:
     
     def _batch_translate_with_qwen(self, segments: List[Dict[str, Any]], 
                                   output_dir: Optional[str] = None, 
-                                  output_manager: Optional[OutputManager] = None) -> Dict[str, Any]:
+                                  output_manager: Optional[OutputManager] = None,
+                                  progress_callback=None) -> Dict[str, Any]:
         """
         使用Qwen进行批量翻译
         
@@ -293,16 +297,17 @@ class TextTranslator:
             segments: 音频段落列表
             output_dir: 输出目录
             output_manager: 输出管理器
+            progress_callback: 进度回调函数
             
         Returns:
             翻译结果字典
         """
         if self.retry_strategy == "adaptive":
-            return self._batch_translate_adaptive(segments, output_manager)
+            return self._batch_translate_adaptive(segments, output_manager, progress_callback)
         else:
-            return self._batch_translate_simple(segments, output_manager)
+            return self._batch_translate_simple(segments, output_manager, progress_callback)
     
-    def _batch_translate_simple(self, segments: List[Dict[str, Any]], output_manager: Optional[OutputManager] = None) -> Dict[str, Any]:
+    def _batch_translate_simple(self, segments: List[Dict[str, Any]], output_manager: Optional[OutputManager] = None, progress_callback=None) -> Dict[str, Any]:
         """
         使用Qwen进行批量翻译（简单重试策略）
         
@@ -324,6 +329,12 @@ class TextTranslator:
                 batch_num = batch_idx // batch_size + 1
                 
                 self.logger.info(f"处理第 {batch_num}/{total_batches} 批，包含 {len(batch_segments)} 个段落")
+                
+                # 报告批次进度
+                if progress_callback:
+                    completed_segments = len(all_translated_segments)
+                    progress_pct = (completed_segments / len(segments)) * 100 if len(segments) > 0 else 0
+                    progress_callback(5, "步骤5: 文本翻译", progress_pct, f"翻译中 ({completed_segments}/{len(segments)})", completed_segments, len(segments))
                 
                 # 构建当前批次的翻译prompt
                 prompt = self._create_batch_translation_prompt(batch_segments)
@@ -389,7 +400,7 @@ class TextTranslator:
                 "translated_segments": []
             }
     
-    def _batch_translate_adaptive(self, segments: List[Dict[str, Any]], output_manager: Optional[OutputManager] = None) -> Dict[str, Any]:
+    def _batch_translate_adaptive(self, segments: List[Dict[str, Any]], output_manager: Optional[OutputManager] = None, progress_callback=None) -> Dict[str, Any]:
         """
         使用Qwen进行批量翻译（自适应降级重试策略）
         
@@ -418,6 +429,12 @@ class TextTranslator:
                 all_translated_segments.extend(result['translated_segments'])
                 remaining_segments = remaining_segments[translated_count:]
                 self.logger.info(f"✅ 批次 {batch_count} 成功: {translated_count} 个段落, 剩余 {len(remaining_segments)} 个")
+                
+                # 报告进度
+                if progress_callback:
+                    completed_segments = len(all_translated_segments)
+                    progress_pct = (completed_segments / len(segments)) * 100 if len(segments) > 0 else 0
+                    progress_callback(5, "步骤5: 文本翻译", progress_pct, f"翻译中 ({completed_segments}/{len(segments)})", completed_segments, len(segments))
             else:
                 # 失败：使用降级策略
                 self.logger.warning(f"❌ 批次 {batch_count} 失败，开始降级处理")
@@ -431,6 +448,12 @@ class TextTranslator:
                 all_translated_segments.extend(degraded_result['translated_segments'])
                 remaining_segments = remaining_segments[translated_count:]
                 self.logger.info(f"✅ 降级完成: {translated_count} 个段落, 剩余 {len(remaining_segments)} 个")
+                
+                # 报告进度
+                if progress_callback:
+                    completed_segments = len(all_translated_segments)
+                    progress_pct = (completed_segments / len(segments)) * 100 if len(segments) > 0 else 0
+                    progress_callback(5, "步骤5: 文本翻译", progress_pct, f"翻译中 ({completed_segments}/{len(segments)})", completed_segments, len(segments))
         
         # 生成翻译报告
         translation_report = self._generate_batch_translation_report(segments, all_translated_segments)

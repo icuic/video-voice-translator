@@ -37,6 +37,9 @@ class Step4SpeechRecognition(BaseStep):
             from ..whisper_processor import WhisperProcessor
             whisper_processor = WhisperProcessor(self.config)
         
+        # 获取全局进度回调
+        progress_callback = getattr(self.context, 'progress_callback', None)
+        
         # 统一ASR处理：支持单说话人和多说话人场景
         if tracks and len(tracks) > 1:
             # 多说话人场景：对每个说话人紧凑音轨分别运行ASR，然后合并
@@ -46,7 +49,7 @@ class Step4SpeechRecognition(BaseStep):
             speaker_track_index = {}  # 用于步骤6的参考音频提取
             detected_language_for_result = None  # 保存检测到的语言，用于最终结果
             
-            for t in tracks:
+            for spk_idx, t in enumerate(tracks, 1):
                 spk_id = t.get('speaker_id')
                 wav_path = t.get('wav_path')
                 map_path = t.get('map_path')
@@ -58,6 +61,10 @@ class Step4SpeechRecognition(BaseStep):
                 
                 # 对说话人紧凑音轨运行ASR
                 self.logger.info(f"ASR处理说话人 {spk_id}...")
+                
+                # 报告进度（多说话人场景）
+                if progress_callback:
+                    progress_callback(4, "步骤4: 语音识别", 0, f"识别说话人 {spk_id} ({spk_idx}/{len(tracks)})", spk_idx, len(tracks))
                 
                 # 语言检测
                 detected_language = None
@@ -178,8 +185,17 @@ class Step4SpeechRecognition(BaseStep):
             
         else:
             # 单说话人场景：直接对02_vocals.wav运行ASR
+            # 报告开始进度
+            if progress_callback:
+                progress_callback(4, "步骤4: 语音识别", 0, "开始语音识别...", 0, 1)
+            
             transcription_result = whisper_processor.transcribe_with_output_manager(vocals_path, self.output_manager)
             speaker_track_index = None
+            
+            # 报告完成进度
+            if progress_callback and transcription_result.get("success"):
+                segments_count = len(transcription_result.get("segments", []))
+                progress_callback(4, "步骤4: 语音识别", 100, f"识别完成，共 {segments_count} 个片段", segments_count, segments_count)
         
         if not transcription_result.get("success"):
             return {
