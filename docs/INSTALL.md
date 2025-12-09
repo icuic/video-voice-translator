@@ -25,9 +25,10 @@
 ```
 
 **一键安装脚本会自动处理：**
-- ✅ 安装系统依赖（FFmpeg、lsof）
+- ✅ 安装系统依赖（FFmpeg、lsof、Node.js）
 - ✅ 安装 IndexTTS2
 - ✅ 安装主项目依赖
+- ✅ 安装前端依赖
 - ✅ 验证安装（包括依赖、IndexTTS2、模型文件）
 - ✅ 配置环境变量（DASHSCOPE_API_KEY）
 
@@ -73,6 +74,26 @@ ffprobe -version
 ```bash
 sudo apt-get install -y lsof
 ```
+
+### Node.js 安装（必需）
+
+Node.js 是系统必需依赖，一键安装脚本会自动安装。如果需要手动安装：
+
+**Ubuntu/Debian**：
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo bash -
+sudo apt-get install -y nodejs
+```
+
+**验证安装**：
+
+```bash
+node --version
+npm --version
+```
+
+如果命令能正常显示版本信息，说明安装成功。
 
 ### 二、安装 IndexTTS2
 
@@ -133,7 +154,17 @@ cd ..
 python tools/check_dependencies.py
 ```
 
-### 四、环境变量配置
+### 四、安装前端依赖（必需）
+
+前端依赖是系统必需依赖，一键安装脚本会自动安装。如果需要手动安装：
+
+```bash
+cd frontend
+npm install
+cd ..
+```
+
+### 五、环境变量配置
 
 ### DASHSCOPE_API_KEY 配置（翻译功能必需）
 
@@ -163,6 +194,23 @@ source ~/.bashrc
 ## 下一步
 
 安装完成后，您可以：
+
+- **使用 Gradio Web UI**（推荐新手）：
+  ```bash
+  ./run_webui.sh
+  ```
+  访问 `http://localhost:7861`
+
+- **使用前后端分离模式**（需要 Node.js 和前端依赖）：
+  ```bash
+  ./start.sh
+  ```
+  前端：`http://localhost:5173`，后端 API：`http://localhost:8000`
+
+- **使用命令行方式**：
+  ```bash
+  ./run_cli.sh input.mp4
+  ```
 
 - 查看 [使用指南](USAGE.md) 了解如何使用系统
 - 查看 [流程文档](WORKFLOW.md) 了解系统工作原理

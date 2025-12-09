@@ -182,7 +182,7 @@ source ~/.bashrc
 
 ### 使用
 
-**Web UI 方式**（推荐）：
+**方式一：Gradio Web UI**（推荐新手）：
 
 ```bash
 ./run_webui.sh
@@ -190,7 +190,17 @@ source ~/.bashrc
 
 启动后访问 `http://localhost:7861`
 
-**命令行方式**：
+**方式二：前后端分离模式**：
+
+```bash
+./start.sh
+```
+
+- 前端界面：`http://localhost:5173`
+- 后端 API：`http://localhost:8000`
+- API 文档：`http://localhost:8000/docs`
+
+**方式三：命令行方式**：
 
 ```bash
 # 自动检测语言并翻译

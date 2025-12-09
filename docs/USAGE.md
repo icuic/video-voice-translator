@@ -16,7 +16,7 @@
 
 安装完成后，您可以：
 
-**Web UI 方式**（推荐）：
+**方式一：Gradio Web UI**（推荐新手）：
 
 ```bash
 ./run_webui.sh
@@ -24,7 +24,17 @@
 
 启动后访问 `http://localhost:7861`
 
-**命令行方式**：
+**方式二：前后端分离模式**：
+
+```bash
+./start.sh
+```
+
+- 前端界面：`http://localhost:5173`
+- 后端 API：`http://localhost:8000`
+- API 文档：`http://localhost:8000/docs`
+
+**方式三：命令行方式**：
 
 ```bash
 # 自动检测语言并翻译
@@ -73,6 +83,63 @@ Web UI 提供了友好的图形界面，适合不熟悉命令行的用户使用�
 #### 停止 Web UI
 
 在终端中按 `Ctrl+C` 停止 Web UI 服务器。
+
+---
+
+### 前后端分离模式
+
+前后端分离模式提供了更灵活的架构，适合需要自定义前端界面或集成到其他系统的场景。
+
+#### 前置要求
+
+- Node.js v20 或更高版本（安装脚本会自动安装）
+- 前端依赖已安装（安装脚本会自动安装）
+
+#### 启动服务
+
+```bash
+./start.sh
+```
+
+启动脚本会自动：
+- 检查并安装后端依赖（FastAPI、uvicorn 等）
+- 检查并安装前端依赖（如果 `node_modules` 不存在）
+- 启动后端服务（端口 8000）
+- 启动前端服务（端口 5173）
+
+#### 访问服务
+
+- **前端界面**：`http://localhost:5173` 或 `http://<服务器IP>:5173`
+- **后端 API**：`http://localhost:8000`
+- **API 文档**：`http://localhost:8000/docs`（Swagger UI）
+
+#### 单独启动服务
+
+如果需要单独启动后端或前端：
+
+```bash
+# 仅启动后端
+./start_backend.sh
+
+# 仅启动前端
+./start_frontend.sh
+```
+
+#### 停止服务
+
+在终端中按 `Ctrl+C` 停止所有服务，或使用：
+
+```bash
+pkill -f "uvicorn|vite"
+```
+
+#### API 使用
+
+后端提供了 RESTful API，可以用于集成到其他系统：
+
+- 查看 API 文档：访问 `http://localhost:8000/docs`
+- 健康检查：`GET /health`
+- 其他 API 端点请参考 API 文档
 
 ---
 

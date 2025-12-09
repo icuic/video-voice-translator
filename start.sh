@@ -30,16 +30,16 @@ echo -e "${YELLOW}检查前端依赖...${NC}"
 cd "$SCRIPT_DIR/frontend"
 if [ ! -d "node_modules" ]; then
     echo -e "${YELLOW}安装前端依赖...${NC}"
-    export NVM_DIR="$HOME/.nvm"
-    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-    nvm use 20 2>/dev/null || true
-    npm install
+    # 尝试使用系统的 npm，如果不存在则尝试 nvm
+    if command -v npm &> /dev/null; then
+        npm install
+    else
+        export NVM_DIR="$HOME/.nvm"
+        [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+        nvm use 20 2>/dev/null || true
+        npm install
+    fi
 fi
-
-# 加载 nvm（如果存在）
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-nvm use 20 2>/dev/null || true
 
 # 清理函数
 cleanup() {
@@ -91,16 +91,18 @@ fi
 # 启动前端（监听所有接口，允许外部访问）
 echo -e "${GREEN}启动前端服务 (端口 5173，监听所有接口)...${NC}"
 
-# 检查Node.js
-NODE_PATH="/root/.cursor-server/bin/60d42bed27e5775c43ec0428d8c653c49e58e260/node"
-if [ ! -x "$NODE_PATH" ]; then
-    echo -e "${YELLOW}❌ 错误: 找不到Node.js${NC}"
-    echo -e "${YELLOW}请检查Cursor IDE是否正确安装${NC}"
+# 检查系统安装的 Node.js
+if ! command -v node &> /dev/null; then
+    echo -e "${YELLOW}❌ 错误: 找不到 Node.js${NC}"
+    echo -e "${YELLOW}请先运行安装脚本安装 Node.js: ./install_all.sh${NC}"
+    echo -e "${YELLOW}或手动安装: curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs${NC}"
     exit 1
 fi
 
+NODE_CMD="node"
+
 cd "$SCRIPT_DIR/frontend"
-"$NODE_PATH" ./node_modules/.bin/vite --host 0.0.0.0 --port 5173 > /tmp/frontend.log 2>&1 &
+"$NODE_CMD" ./node_modules/.bin/vite --host 0.0.0.0 --port 5173 > /tmp/frontend.log 2>&1 &
 FRONTEND_PID=$!
 
 # 等待前端启动

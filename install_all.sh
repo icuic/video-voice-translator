@@ -12,9 +12,10 @@ echo "=========================================="
 echo "🚀 一键安装脚本"
 echo "=========================================="
 echo "将自动完成所有安装步骤，包括："
-echo "  - 系统依赖（FFmpeg、lsof）"
+echo "  - 系统依赖（FFmpeg、lsof、Node.js）"
 echo "  - IndexTTS2 安装（包含模型文件下载，约 5.5GB）"
 echo "  - 主项目依赖安装"
+echo "  - 前端依赖安装"
 echo "  - 环境变量配置"
 echo "=========================================="
 echo ""
@@ -28,7 +29,7 @@ fi
 
 # 步骤1: 安装系统依赖
 echo "=========================================="
-echo "📦 步骤 1/6: 安装系统依赖"
+echo "📦 步骤 1/7: 安装系统依赖"
 echo "=========================================="
 
 # 检查 FFmpeg
@@ -50,10 +51,20 @@ else
     echo "✅ lsof 已安装"
 fi
 
+# 检查并安装 Node.js
+if ! command -v node &> /dev/null; then
+    echo "安装 Node.js..."
+    curl -fsSL https://deb.nodesource.com/setup_20.x | $SUDO_CMD bash -
+    $SUDO_CMD apt-get install -y nodejs
+    echo "✅ Node.js 安装完成: $(node --version)"
+else
+    echo "✅ Node.js 已安装: $(node --version)"
+fi
+
 # 步骤2: 安装 IndexTTS2
 echo ""
 echo "=========================================="
-echo "📦 步骤 2/6: 安装 IndexTTS2"
+echo "📦 步骤 2/7: 安装 IndexTTS2"
 echo "=========================================="
 
 if [ ! -f "${PROJECT_ROOT}/scripts/install/install_index_tts.sh" ]; then
@@ -66,7 +77,7 @@ bash "${PROJECT_ROOT}/scripts/install/install_index_tts.sh"
 # 步骤3: 检查 PyTorch
 echo ""
 echo "=========================================="
-echo "🔍 步骤 3/6: 检查 PyTorch"
+echo "🔍 步骤 3/7: 检查 PyTorch"
 echo "=========================================="
 
 if [ -f "${PROJECT_ROOT}/index-tts/.venv/bin/activate" ]; then
@@ -88,7 +99,7 @@ fi
 # 步骤4: 安装主项目依赖
 echo ""
 echo "=========================================="
-echo "📦 步骤 4/6: 安装主项目依赖"
+echo "📦 步骤 4/7: 安装主项目依赖"
 echo "=========================================="
 
 if [ ! -f "${PROJECT_ROOT}/scripts/install/install_with_uv_china.sh" ]; then
@@ -97,6 +108,28 @@ if [ ! -f "${PROJECT_ROOT}/scripts/install/install_with_uv_china.sh" ]; then
 fi
 
 bash "${PROJECT_ROOT}/scripts/install/install_with_uv_china.sh"
+
+# 步骤5: 安装前端依赖
+echo ""
+echo "=========================================="
+echo "📦 步骤 5/7: 安装前端依赖"
+echo "=========================================="
+
+if ! command -v npm &> /dev/null; then
+    echo "❌ 错误: npm 未找到，但 Node.js 应该已安装"
+    echo "   请检查 Node.js 安装是否正确"
+    exit 1
+fi
+
+cd "${PROJECT_ROOT}/frontend"
+if [ ! -d "node_modules" ]; then
+    echo "安装前端依赖..."
+    npm install
+    echo "✅ 前端依赖安装完成"
+else
+    echo "✅ 前端依赖已安装"
+fi
+cd "${PROJECT_ROOT}"
 
 # 最终验证
 echo ""
@@ -132,7 +165,7 @@ fi
 # 步骤6: 配置环境变量
 echo ""
 echo "=========================================="
-echo "⚙️  步骤 6/6: 配置环境变量"
+echo "⚙️  步骤 6/7: 配置环境变量"
 echo "=========================================="
 
 # 注意：HF_ENDPOINT 已在 install_index_tts.sh 中配置（模型下载时）
@@ -171,17 +204,26 @@ else
     echo "✅ DASHSCOPE_API_KEY 已配置"
 fi
 
+# 步骤7: 安装完成提示
 echo ""
 echo "=========================================="
 echo "🎉 安装完成！"
 echo "=========================================="
 echo ""
 echo "下一步可以："
-echo "1. 启动 Web UI: ./run_webui.sh"
-echo "2. 使用命令行: ./run_cli.sh input.mp4"
+echo "1. 启动 Gradio Web UI（推荐新手）: ./run_webui.sh"
+echo "   访问: http://localhost:7861"
+echo ""
+echo "2. 启动前后端分离模式（需要 Node.js）: ./start.sh"
+echo "   前端: http://localhost:5173"
+echo "   后端 API: http://localhost:8000"
+echo "   API 文档: http://localhost:8000/docs"
+echo ""
+echo "3. 使用命令行: ./run_cli.sh input.mp4"
 echo ""
 echo "如果遇到问题，请查看："
 echo "- 安装文档: docs/INSTALL.md"
+echo "- 使用指南: docs/USAGE.md"
 echo "- IndexTTS2 官方文档: https://github.com/index-tts/index-tts"
 echo ""
 
