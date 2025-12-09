@@ -20,10 +20,16 @@ else
     echo "✅ uv 已安装: $(uv --version 2>/dev/null | head -1 || echo '已安装')"
 fi
 
-# 步骤1: 克隆 IndexTTS2 仓库（如果不存在）
-if [ ! -d "${PROJECT_ROOT}/index-tts" ]; then
-    echo ""
-    echo "📥 检测到 index-tts 目录不存在，正在克隆仓库..."
+# 步骤1: 克隆 IndexTTS2 仓库（如果不存在或为空）
+if [ ! -d "${PROJECT_ROOT}/index-tts" ] || [ ! -f "${PROJECT_ROOT}/index-tts/pyproject.toml" ]; then
+    if [ -d "${PROJECT_ROOT}/index-tts" ] && [ ! -f "${PROJECT_ROOT}/index-tts/pyproject.toml" ]; then
+        echo ""
+        echo "⚠️  检测到 index-tts 目录存在但为空或不完整，正在重新克隆..."
+        rm -rf "${PROJECT_ROOT}/index-tts"
+    else
+        echo ""
+        echo "📥 检测到 index-tts 目录不存在，正在克隆仓库..."
+    fi
     git clone https://github.com/index-tts/index-tts.git "${PROJECT_ROOT}/index-tts"
     echo "✅ IndexTTS2 仓库克隆完成"
 else
@@ -32,15 +38,35 @@ fi
 
 cd "${PROJECT_ROOT}/index-tts"
 
-# 步骤2: 检查 git-lfs（可选，用于下载大文件）
+# 验证 pyproject.toml 是否存在
+if [ ! -f "pyproject.toml" ]; then
+    echo "❌ 错误: 在 index-tts 目录中找不到 pyproject.toml 文件"
+    echo "   请检查仓库是否正确克隆"
+    exit 1
+fi
+
+# 步骤2: 检查并安装 git-lfs（用于下载示例音频文件）
 if ! command -v git-lfs &> /dev/null; then
-    echo "⚠️  git-lfs 未安装，跳过大文件下载步骤"
-    echo "   如需下载模型文件，请先安装: apt-get install git-lfs"
+    echo "📦 检测到 git-lfs 未安装，正在安装..."
+    # 检查是否为 root 用户
+    if [ "$EUID" -eq 0 ]; then
+        SUDO_CMD=""
+    else
+        SUDO_CMD="sudo"
+    fi
+    $SUDO_CMD apt-get update
+    $SUDO_CMD apt-get install -y git-lfs
+    echo "✅ git-lfs 安装完成"
 else
     echo "✅ git-lfs 已安装"
-    git lfs install
-    git lfs pull
 fi
+
+# 启用 Git-LFS 并下载示例音频文件（按照官方文档）
+echo "配置 Git-LFS..."
+git lfs install
+echo "下载示例音频文件..."
+git lfs pull
+echo "✅ 示例音频文件下载完成"
 
 # 步骤3: 使用 uv 安装依赖（使用国内镜像加速）
 echo ""
