@@ -25,20 +25,17 @@ if ! python3 -c "import fastapi, uvicorn" 2>/dev/null; then
     pip3 install -q -r requirements.txt
 fi
 
+# 统一加载 nvm（如果存在），确保使用 Node.js 20
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+nvm use 20 2>/dev/null || true
+
 # 检查前端依赖
 echo -e "${YELLOW}检查前端依赖...${NC}"
 cd "$SCRIPT_DIR/frontend"
 if [ ! -d "node_modules" ]; then
     echo -e "${YELLOW}安装前端依赖...${NC}"
-    # 尝试使用系统的 npm，如果不存在则尝试 nvm
-    if command -v npm &> /dev/null; then
-        npm install
-    else
-        export NVM_DIR="$HOME/.nvm"
-        [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-        nvm use 20 2>/dev/null || true
-        npm install
-    fi
+    npm install
 fi
 
 # 清理函数
@@ -65,7 +62,30 @@ fi
 cd "$INDEX_TTS_DIR"
 source .venv/bin/activate
 
-# 设置环境变量
+# 设置环境变量（参考 start_backend.sh）
+# 优先使用已存在的环境变量，否则从 ~/.bashrc 读取
+if [ -z "$DASHSCOPE_API_KEY" ] && [ -f ~/.bashrc ]; then
+    # 支持单引号和双引号两种格式
+    DASHSCOPE_LINE=$(grep "^export DASHSCOPE_API_KEY=" ~/.bashrc | head -1)
+    if [ -n "$DASHSCOPE_LINE" ]; then
+        # 尝试提取单引号或双引号中的值
+        DASHSCOPE_KEY=$(echo "$DASHSCOPE_LINE" | sed -n "s/.*['\"]\(.*\)['\"].*/\1/p")
+        if [ -n "$DASHSCOPE_KEY" ]; then
+            export DASHSCOPE_API_KEY="$DASHSCOPE_KEY"
+        fi
+    fi
+fi
+
+if [ -z "$HF_ENDPOINT" ] && [ -f ~/.bashrc ]; then
+    HF_ENDPOINT_LINE=$(grep "^export HF_ENDPOINT=" ~/.bashrc | head -1)
+    if [ -n "$HF_ENDPOINT_LINE" ]; then
+        HF_ENDPOINT_VAL=$(echo "$HF_ENDPOINT_LINE" | sed -n "s/.*['\"]\(.*\)['\"].*/\1/p")
+        if [ -n "$HF_ENDPOINT_VAL" ]; then
+            export HF_ENDPOINT="$HF_ENDPOINT_VAL"
+        fi
+    fi
+fi
+
 export HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
 export HF_HOME="$INDEX_TTS_DIR/.cache/hf"
 export PYTHONUNBUFFERED=1
@@ -76,7 +96,7 @@ export LD_LIBRARY_PATH="${INDEX_TTS_DIR}/.venv/lib/python3.10/site-packages/nvid
 export PATH="/usr/local/cuda/bin:${PATH}"
 
 cd "$SCRIPT_DIR"
-"${INDEX_TTS_DIR}/.venv/bin/python" -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload > /tmp/backend.log 2>&1 &
+"${INDEX_TTS_DIR}/.venv/bin/python" -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload --limit-max-requests 1000 --timeout-keep-alive 300 --limit-concurrency 1000 --backlog 2048 > /tmp/backend.log 2>&1 &
 BACKEND_PID=$!
 
 # 等待后端启动
@@ -91,7 +111,7 @@ fi
 # 启动前端（监听所有接口，允许外部访问）
 echo -e "${GREEN}启动前端服务 (端口 5173，监听所有接口)...${NC}"
 
-# 检查系统安装的 Node.js
+# 检查 Node.js 是否可用
 if ! command -v node &> /dev/null; then
     echo -e "${YELLOW}❌ 错误: 找不到 Node.js${NC}"
     echo -e "${YELLOW}请先运行安装脚本安装 Node.js: ./install_all.sh${NC}"
@@ -99,10 +119,8 @@ if ! command -v node &> /dev/null; then
     exit 1
 fi
 
-NODE_CMD="node"
-
 cd "$SCRIPT_DIR/frontend"
-"$NODE_CMD" ./node_modules/.bin/vite --host 0.0.0.0 --port 5173 > /tmp/frontend.log 2>&1 &
+node ./node_modules/.bin/vite --host 0.0.0.0 --port 5173 > /tmp/frontend.log 2>&1 &
 FRONTEND_PID=$!
 
 # 等待前端启动

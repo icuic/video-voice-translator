@@ -18,14 +18,26 @@ cd "${INDEX_TTS_DIR}"
 source .venv/bin/activate
 
 # 设置环境变量（参考 run_webui.sh）
-if [ -f ~/.bashrc ]; then
-    DASHSCOPE_KEY=$(grep "^export DASHSCOPE_API_KEY=" ~/.bashrc | head -1 | cut -d'"' -f2)
-    if [ -n "$DASHSCOPE_KEY" ]; then
-        export DASHSCOPE_API_KEY="$DASHSCOPE_KEY"
+# 优先使用已存在的环境变量，否则从 ~/.bashrc 读取
+if [ -z "$DASHSCOPE_API_KEY" ] && [ -f ~/.bashrc ]; then
+    # 支持单引号和双引号两种格式
+    DASHSCOPE_LINE=$(grep "^export DASHSCOPE_API_KEY=" ~/.bashrc | head -1)
+    if [ -n "$DASHSCOPE_LINE" ]; then
+        # 尝试提取单引号或双引号中的值
+        DASHSCOPE_KEY=$(echo "$DASHSCOPE_LINE" | sed -n "s/.*['\"]\(.*\)['\"].*/\1/p")
+        if [ -n "$DASHSCOPE_KEY" ]; then
+            export DASHSCOPE_API_KEY="$DASHSCOPE_KEY"
+        fi
     fi
-    HF_ENDPOINT_VAL=$(grep "^export HF_ENDPOINT=" ~/.bashrc | head -1 | cut -d'"' -f2)
-    if [ -n "$HF_ENDPOINT_VAL" ]; then
-        export HF_ENDPOINT="$HF_ENDPOINT_VAL"
+fi
+
+if [ -z "$HF_ENDPOINT" ] && [ -f ~/.bashrc ]; then
+    HF_ENDPOINT_LINE=$(grep "^export HF_ENDPOINT=" ~/.bashrc | head -1)
+    if [ -n "$HF_ENDPOINT_LINE" ]; then
+        HF_ENDPOINT_VAL=$(echo "$HF_ENDPOINT_LINE" | sed -n "s/.*['\"]\(.*\)['\"].*/\1/p")
+        if [ -n "$HF_ENDPOINT_VAL" ]; then
+            export HF_ENDPOINT="$HF_ENDPOINT_VAL"
+        fi
     fi
 fi
 

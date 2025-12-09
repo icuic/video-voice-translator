@@ -16,16 +16,28 @@ source .venv/bin/activate
 # 设置环境变量
 # 加载用户环境变量（包含DASHSCOPE_API_KEY等）
 # 注意：~/.bashrc 在非交互式shell中会提前返回，所以直接读取并设置
-if [ -f ~/.bashrc ]; then
+# 优先使用已存在的环境变量，否则从 ~/.bashrc 读取
+if [ -z "$DASHSCOPE_API_KEY" ] && [ -f ~/.bashrc ]; then
     # 读取 DASHSCOPE_API_KEY（如果存在）
-    DASHSCOPE_KEY=$(grep "^export DASHSCOPE_API_KEY=" ~/.bashrc | head -1 | cut -d'"' -f2)
-    if [ -n "$DASHSCOPE_KEY" ]; then
-        export DASHSCOPE_API_KEY="$DASHSCOPE_KEY"
+    # 支持单引号和双引号两种格式
+    DASHSCOPE_LINE=$(grep "^export DASHSCOPE_API_KEY=" ~/.bashrc | head -1)
+    if [ -n "$DASHSCOPE_LINE" ]; then
+        # 尝试提取单引号或双引号中的值
+        DASHSCOPE_KEY=$(echo "$DASHSCOPE_LINE" | sed -n "s/.*['\"]\(.*\)['\"].*/\1/p")
+        if [ -n "$DASHSCOPE_KEY" ]; then
+            export DASHSCOPE_API_KEY="$DASHSCOPE_KEY"
+        fi
     fi
+fi
+
+if [ -z "$HF_ENDPOINT" ] && [ -f ~/.bashrc ]; then
     # 读取 HF_ENDPOINT（如果存在）
-    HF_ENDPOINT_VAL=$(grep "^export HF_ENDPOINT=" ~/.bashrc | head -1 | cut -d'"' -f2)
-    if [ -n "$HF_ENDPOINT_VAL" ]; then
-        export HF_ENDPOINT="$HF_ENDPOINT_VAL"
+    HF_ENDPOINT_LINE=$(grep "^export HF_ENDPOINT=" ~/.bashrc | head -1)
+    if [ -n "$HF_ENDPOINT_LINE" ]; then
+        HF_ENDPOINT_VAL=$(echo "$HF_ENDPOINT_LINE" | sed -n "s/.*['\"]\(.*\)['\"].*/\1/p")
+        if [ -n "$HF_ENDPOINT_VAL" ]; then
+            export HF_ENDPOINT="$HF_ENDPOINT_VAL"
+        fi
     fi
 fi
 
