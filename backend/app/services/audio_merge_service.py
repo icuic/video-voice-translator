@@ -6,6 +6,10 @@
 import os
 import sys
 import logging
+import tempfile
+import numpy as np
+import librosa
+import soundfile as sf
 from typing import List, Dict, Any
 from pathlib import Path
 
@@ -137,25 +141,101 @@ async def incremental_merge_video(task_id: str):
     if not os.path.exists(final_audio_path):
         raise FileNotFoundError(f"最终音频文件不存在: {final_audio_path}")
     
-    # 使用FFmpeg合并视频和音频
+    # 使用librosa混合音频（与主流程保持一致），避免FFmpeg amix的标准化问题
     if os.path.exists(accompaniment_path):
-        # 有背景音乐：先降低背景音乐音量，然后混合配音和背景音乐
-        # volume=0.3 表示将背景音乐降低到原来的30%
-        cmd = [
-            'ffmpeg',
-            '-i', original_input_path,
-            '-i', final_audio_path,
-            '-i', accompaniment_path,
-            '-c:v', 'copy',
-            '-c:a', 'aac',
-            '-filter_complex', '[2:a]volume=0.3[accompaniment_low];[1:a][accompaniment_low]amix=inputs=2:duration=first[aout]',
-            '-map', '0:v:0',
-            '-map', '[aout]',
-            '-y',
-            final_video_path
-        ]
+        # 有背景音乐：使用librosa混合音频，完全控制音量
+        logger.info("使用librosa混合音频，避免FFmpeg amix的标准化问题")
+        
+        try:
+            # 1. 使用librosa加载音频并混合
+            voice_audio, voice_sr = librosa.load(final_audio_path, sr=None)
+            accompaniment_audio, accomp_sr = librosa.load(accompaniment_path, sr=None)
+            
+            # 统一采样率
+            if voice_sr != accomp_sr:
+                if voice_sr > accomp_sr:
+                    accompaniment_audio = librosa.resample(accompaniment_audio, orig_sr=accomp_sr, target_sr=voice_sr, res_type='kaiser_best')
+                    sample_rate = voice_sr
+                else:
+                    voice_audio = librosa.resample(voice_audio, orig_sr=voice_sr, target_sr=accomp_sr, res_type='kaiser_best')
+                    sample_rate = accomp_sr
+            else:
+                sample_rate = voice_sr
+            
+            # 调整长度以匹配（以较长的为准）
+            max_length = max(len(voice_audio), len(accompaniment_audio))
+            if len(voice_audio) < max_length:
+                voice_audio = np.pad(voice_audio, (0, max_length - len(voice_audio)), mode='constant')
+            if len(accompaniment_audio) < max_length:
+                accompaniment_audio = np.pad(accompaniment_audio, (0, max_length - len(accompaniment_audio)), mode='constant')
+            
+            # 降低背景音乐音量到30%
+            accompaniment_audio = accompaniment_audio * 0.3
+            
+            # 混合音频（直接相加，保持原始音量）
+            mixed_audio = voice_audio + accompaniment_audio
+            
+            # 防止削波：如果峰值超过0.99，进行归一化
+            max_amplitude = np.max(np.abs(mixed_audio))
+            if max_amplitude > 0.99:
+                logger.warning(f"检测到削波风险（峰值: {max_amplitude:.4f}），进行归一化")
+                mixed_audio = mixed_audio / max_amplitude * 0.99
+            
+            # 保存混合后的音频到临时文件
+            temp_audio = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+            temp_audio_path = temp_audio.name
+            temp_audio.close()
+            
+            sf.write(temp_audio_path, mixed_audio, sample_rate, subtype='PCM_16')
+            logger.info(f"音频混合完成，保存到临时文件: {temp_audio_path}")
+            
+            # 2. 使用FFmpeg合并视频和混合后的音频
+            cmd = [
+                'ffmpeg',
+                '-i', original_input_path,
+                '-i', temp_audio_path,
+                '-c:v', 'copy',
+                '-c:a', 'aac',
+                '-map', '0:v:0',
+                '-map', '1:a:0',
+                '-y',
+                final_video_path
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            
+            # 清理临时文件
+            if os.path.exists(temp_audio_path):
+                os.unlink(temp_audio_path)
+            
+            if result.returncode != 0:
+                raise RuntimeError(f"视频合成失败: {result.stderr}")
+            
+            logger.info('使用librosa混合音频，保持原始音量')
+            
+        except Exception as e:
+            logger.error(f"使用librosa混合音频失败: {e}")
+            # 如果librosa失败，回退到FFmpeg方案（注意：amix会进行标准化，可能导致音量降低）
+            logger.warning("回退到FFmpeg amix方案（注意：可能存在音量降低）")
+            cmd = [
+                'ffmpeg',
+                '-i', original_input_path,
+                '-i', final_audio_path,
+                '-i', accompaniment_path,
+                '-c:v', 'copy',
+                '-c:a', 'aac',
+                '-filter_complex', '[2:a]volume=0.3[accompaniment_low];[1:a][accompaniment_low]amix=inputs=2:duration=first:weights="2 1"[aout]',
+                '-map', '0:v:0',
+                '-map', '[aout]',
+                '-y',
+                final_video_path
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            
+            if result.returncode != 0:
+                raise RuntimeError(f"视频合成失败: {result.stderr}")
     else:
-        # 只有配音
+        # 只有配音，直接映射音频
         cmd = [
             'ffmpeg',
             '-i', original_input_path,
@@ -167,11 +247,11 @@ async def incremental_merge_video(task_id: str):
             '-y',
             final_video_path
         ]
-    
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    
-    if result.returncode != 0:
-        raise RuntimeError(f"视频合成失败: {result.stderr}")
+        
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            raise RuntimeError(f"视频合成失败: {result.stderr}")
     
     logger.info(f"增量视频合并完成: {final_video_path}")
     return {

@@ -716,7 +716,10 @@ class TimestampedAudioMerger:
             for i in range(1, amix_inputs):
                 amix_inputs_list.append(f"[{i}_vol]")
             
-            filter_complex = f"{';'.join(filter_parts)};{''.join(amix_inputs_list)}amix=inputs={amix_inputs}:duration=longest"
+            # FFmpeg 4.2.7不支持normalize参数，使用weights来保持音量
+            # 给所有音频片段相同的权重，避免音量降低
+            weights = " ".join(["1"] * amix_inputs)
+            filter_complex = f"{';'.join(filter_parts)};{''.join(amix_inputs_list)}amix=inputs={amix_inputs}:duration=longest:weights=\"{weights}\""
         else:
             filter_complex = f"amix=inputs={amix_inputs}:duration=longest"
         
