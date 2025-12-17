@@ -62,11 +62,11 @@ else
 fi
 
 # 启用 Git-LFS 并下载示例音频文件（按照官方文档）
-echo "配置 Git-LFS..."
-git lfs install
-echo "下载示例音频文件..."
-git lfs pull
-echo "✅ 示例音频文件下载完成"
+# echo "配置 Git-LFS..."
+# git lfs install
+# echo "下载示例音频文件..."
+# git lfs pull
+# echo "✅ 示例音频文件下载完成"
 
 # 步骤3: 使用 uv 安装依赖（使用国内镜像加速）
 echo ""
