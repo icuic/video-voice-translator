@@ -15,6 +15,12 @@ class Step7VoiceCloning(BaseStep):
     
     def execute(self) -> Dict[str, Any]:
         """执行步骤7: 音色克隆"""
+
+        # #region debug-point A:step7-entry
+        import json, urllib.request, os as _os; _p='.dbg/voice-clone-page-close.env'; _u,_s='http://127.0.0.1:7778/event','voice-clone-page-close'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+        try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"A","location":"src/pipeline/step7_voice_cloning.py:execute:entry","msg":"[DEBUG] step7 voice cloning entry","data":{"task_dir":getattr(self,'task_dir',None),"segments_file":os.path.join(getattr(self,'task_dir',''),"06_segments_with_audio.json")}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+        except Exception: pass
+        # #endregion
         
         # 读取输入segments文件
         segments_with_audio_file = os.path.join(self.task_dir, "06_segments_with_audio.json")
@@ -31,6 +37,12 @@ class Step7VoiceCloning(BaseStep):
         if voice_cloner is None:
             from ..voice_cloner import VoiceCloner
             voice_cloner = VoiceCloner(self.config)
+
+        # #region debug-point A:step7-model-ready
+        import json, urllib.request, os as _os; _p='.dbg/voice-clone-page-close.env'; _u,_s='http://127.0.0.1:7778/event','voice-clone-page-close'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+        try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"A","location":"src/pipeline/step7_voice_cloning.py:execute:model","msg":"[DEBUG] step7 model instance ready","data":{"segments_count":len(segments) if isinstance(segments,list) else None}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+        except Exception: pass
+        # #endregion
         
         # 定义进度回调函数
         def progress_callback(progress_pct, message, current_segment=0, total_segments=0):
@@ -44,6 +56,12 @@ class Step7VoiceCloning(BaseStep):
 
         # 使用并行克隆方法，传入进度回调
         cloning_result = voice_cloner.clone_segments_parallel(segments, self.output_manager, progress_callback)
+
+        # #region debug-point A:step7-clone-return
+        import json, urllib.request, os as _os; _p='.dbg/voice-clone-page-close.env'; _u,_s='http://127.0.0.1:7778/event','voice-clone-page-close'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+        try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"A","location":"src/pipeline/step7_voice_cloning.py:execute:clone_return","msg":"[DEBUG] step7 clone_segments_parallel returned","data":{"success":bool(cloning_result.get("success")),"error":cloning_result.get("error"),"total_segments":cloning_result.get("total_segments"),"cloned_segments":cloning_result.get("cloned_segments"),"failed_segments":cloning_result.get("failed_segments")}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+        except Exception: pass
+        # #endregion
         
         if not cloning_result.get("success", False):
             return {
@@ -80,4 +98,3 @@ class Step7VoiceCloning(BaseStep):
             "cloning_result": cloning_result,
             "cloning_result_file": "07_cloning_result.json"
         }
-

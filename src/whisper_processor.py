@@ -9,6 +9,11 @@ import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 from .utils import validate_file_path, create_output_dir, safe_filename
+from .device_utils import (
+    get_ctranslate2_gpu_available,
+    get_preferred_torch_device,
+    get_torch_runtime_info,
+)
 from .punctuation_segment_optimizer import PunctuationSegmentOptimizer
 from .semantic_segmenter import SemanticSegmenter
 from .output_manager import OutputManager, StepNumbers
@@ -55,6 +60,7 @@ class WhisperProcessor:
         self.task = self.whisper_config.get("task", "transcribe")
         self.device = self.whisper_config.get("device", "auto")
         self.fp16 = self.whisper_config.get("fp16", False)  # FP16精度加速配置
+        self.runtime_info = get_torch_runtime_info()
         
         # Faster-Whisper 参数配置
         self.faster_whisper_params = self.whisper_config.get("faster_whisper_params", {
@@ -83,6 +89,20 @@ class WhisperProcessor:
                 self.backend = "faster-whisper"
             else:
                 raise ImportError("配置为 whisper，但 whisper 和 faster-whisper 都不可用")
+
+        if self.backend == "faster-whisper":
+            ctranslate2_gpu_available = get_ctranslate2_gpu_available()
+            if (
+                self.runtime_info["accelerator_kind"] == "rocm"
+                and self.device != "cpu"
+                and WHISPER_AVAILABLE
+                and not ctranslate2_gpu_available
+            ):
+                self.logger.warning(
+                    "检测到 AMD ROCm 环境，当前 Faster-Whisper 未检测到可用的 CTranslate2 GPU，"
+                    "自动回退到原生 Whisper 以继续使用 PyTorch GPU。"
+                )
+                self.backend = "whisper"
         
         # 初始化模型
         try:
@@ -191,42 +211,36 @@ class WhisperProcessor:
         
         import torch
         
-        if self.device == "auto":
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        
-        # 强制使用CUDA设备，设置环境变量避免设备转换问题
-        if torch.cuda.is_available():
-            self.device = "cuda"
-            # 设置环境变量强制使用CUDA
-            os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-            torch.cuda.set_device(0)
-            self.logger.info(f"使用CUDA设备: {torch.cuda.get_device_name(0)}")
-            
-            # 清理CUDA缓存
-            torch.cuda.empty_cache()
+        self.device = get_preferred_torch_device(self.device)
+
+        if self.device == "cuda":
+            self.logger.info(
+                f"使用 {self.runtime_info['accelerator_label']} 设备: {self.runtime_info['device_name']}"
+            )
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+        else:
+            self.logger.info("使用CPU设备")
         
         # 使用更安全的模型加载方式
         try:
-            # 先尝试在CPU上加载，然后移动到CUDA
             if self.device == "cuda":
                 try:
-                    # 方法1：直接在CUDA上加载
                     self.model = whisper.load_model(self.model_size, device=self.device)
                     self.logger.info(f"Whisper模型成功加载到设备: {self.device}")
-                except Exception as cuda_error:
-                    # 方法2：先在CPU上加载，然后移动到CUDA
-                    self.logger.warning(f"直接CUDA加载失败，尝试CPU加载后移动: {cuda_error}")
+                except Exception as gpu_error:
+                    self.logger.warning(f"直接加载到GPU失败，尝试CPU加载后迁移: {gpu_error}")
                     self.model = whisper.load_model(self.model_size, device="cpu")
                     
-                    # 将模型移动到CUDA设备
                     try:
                         self.model = self.model.to(self.device)
                         self.logger.info(f"Whisper模型成功从CPU移动到设备: {self.device}")
                     except Exception as move_error:
-                        self.logger.warning(f"模型移动到CUDA失败，回退到CPU: {move_error}")
+                        self.logger.warning(f"模型迁移到GPU失败，回退到CPU: {move_error}")
                         self.device = "cpu"
             else:
-                # CPU模式
                 self.model = whisper.load_model(self.model_size, device=self.device)
                 self.logger.info(f"Whisper模型成功加载到设备: {self.device}")
                 
@@ -238,22 +252,22 @@ class WhisperProcessor:
         """初始化 Faster-Whisper 模型"""
         import torch
         
+        ctranslate2_gpu_available = get_ctranslate2_gpu_available()
+
         if self.device == "auto":
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        
-        # Faster-Whisper 设备设置
-        if self.device == "cuda" and torch.cuda.is_available():
-            self.device = "cuda"
-            # 设置环境变量强制使用CUDA
-            os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-            torch.cuda.set_device(0)
-            self.logger.info(f"使用CUDA设备: {torch.cuda.get_device_name(0)}")
-            
-            # 清理CUDA缓存
-            torch.cuda.empty_cache()
-        else:
+            self.device = "cuda" if ctranslate2_gpu_available else "cpu"
+        elif self.device == "cuda" and not ctranslate2_gpu_available:
+            self.logger.warning("未检测到可用的 CTranslate2 GPU 设备，Faster-Whisper 将回退到 CPU 模式")
             self.device = "cpu"
-            self.logger.info("使用CPU设备")
+
+        if self.device == "cuda":
+            self.logger.info(f"Faster-Whisper 使用GPU设备: {self.runtime_info['device_name']}")
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+        else:
+            self.logger.info("Faster-Whisper 使用CPU设备")
         
         # 设置计算类型
         compute_type = "float16" if self.fp16 and self.device == "cuda" else "float32"
@@ -1270,4 +1284,3 @@ class WhisperProcessor:
         # 保存为JSON格式
         with open(segments_json_file, 'w', encoding='utf-8') as f:
             json.dump(segments, f, ensure_ascii=False, indent=2)
-

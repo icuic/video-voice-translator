@@ -1,0 +1,7 @@
+base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+model: "qwen-plus-2025-07-14"
+api_key_env: "DASHSCOPE_API_KEY"
+timeout: 300.0
+
+# 也可以直接把 key 写进文件，但更推荐配合环境变量使用：
+# api_key: "sk-xxxx"

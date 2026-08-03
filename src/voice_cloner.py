@@ -20,6 +20,11 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from .utils import validate_file_path, create_output_dir, safe_filename
+from .device_utils import (
+    get_torch_runtime_info,
+    is_gpu_runtime_error,
+    should_enable_indextts_cuda_kernel,
+)
 from .output_manager import OutputManager
 from .gpu_monitor import GPUMonitor
 
@@ -51,6 +56,7 @@ class VoiceCloner:
             
         self.config = config
         self.logger = logging.getLogger(__name__)
+        self.runtime_info = get_torch_runtime_info()
         
         # 音色克隆配置
         self.cloning_config = config.get("voice_cloning", {})
@@ -67,14 +73,16 @@ class VoiceCloner:
         self.sample_rate = self.cloning_config.get("sample_rate", 16000)
         self.max_text_tokens = self.cloning_config.get("max_text_tokens", 600)
         self.max_mel_tokens = self.cloning_config.get("max_mel_tokens", 1815)
+        self.use_fp16 = self.cloning_config.get("use_fp16", self.runtime_info["gpu_available"])
+        self.use_cuda_kernel = should_enable_indextts_cuda_kernel(
+            self.cloning_config.get("use_cuda_kernel")
+        )
         
         # 并行克隆配置
         self.enable_parallel = self.cloning_config.get("enable_parallel", True)
         self.max_parallel_workers = self.cloning_config.get("max_parallel_workers", 2)
         
-        # 添加锁来保护GPU访问，避免CUDA错误污染GPU状态
-        # 虽然IndexTTS2的infer方法本身是线程安全的，但CUDA错误会污染GPU状态
-        # 使用锁可以确保同一时间只有一个线程访问GPU，避免并发CUDA错误
+        # 添加锁来保护GPU访问，避免底层运行时错误影响其他线程。
         self._gpu_lock = threading.RLock()
         
         # GPU监控器
@@ -88,6 +96,12 @@ class VoiceCloner:
         """初始化IndexTTS2"""
         try:
             self.logger.info("初始化IndexTTS2...")
+
+            # #region debug-point A:indextts2-init-start
+            import json as _json, urllib.request as _ur, os as _os; _p='.dbg/voice-clone-page-close.env'; _u,_s='http://127.0.0.1:7778/event','voice-clone-page-close'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+            try: _ur.urlopen(_ur.Request(_u, data=_json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"A","location":"src/voice_cloner.py:_init_indexTTS2:start","msg":"[DEBUG] VoiceCloner _init_indexTTS2 start","data":{"model_path":self.model_path,"cwd":_os.getcwd(),"HF_HUB_CACHE":_os.getenv("HF_HUB_CACHE"),"HF_HOME":_os.getenv("HF_HOME"),"TRANSFORMERS_CACHE":_os.getenv("TRANSFORMERS_CACHE"),"device_pref":self.device,"use_fp16":self.use_fp16,"use_cuda_kernel":self.use_cuda_kernel}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+            except Exception: pass
+            # #endregion
             
             # 检查依赖
             self._check_dependencies()
@@ -95,17 +109,31 @@ class VoiceCloner:
             # 直接导入IndexTTS2（避免重复初始化）
             if self._model is None:
                 self.logger.info("首次加载IndexTTS2模型...")
+                self.logger.info(
+                    f"IndexTTS2 运行后端: {self.runtime_info['accelerator_label']} "
+                    f"({self.runtime_info['device_name']})"
+                )
+                self.logger.info(
+                    f"IndexTTS2 优化选项: FP16={'启用' if self.use_fp16 else '禁用'}, "
+                    f"CUDA Kernel={'启用' if self.use_cuda_kernel else '禁用'}"
+                )
                 from indextts.infer_v2 import IndexTTS2
                 
-                # 初始化IndexTTS2模型（启用FP16 + CUDA Kernel优化）
+                # 仅在 NVIDIA CUDA 环境中默认启用 CUDA kernel，避免 AMD/ROCm 误开。
                 self._model = IndexTTS2(
                     cfg_path=os.path.join(self.model_path, "checkpoints/config.yaml"),
                     model_dir=os.path.join(self.model_path, "checkpoints"),
-                    use_fp16=True,        # 启用FP16精度，提升速度并减少显存占用
-                    use_cuda_kernel=True, # 启用CUDA kernel加速
+                    use_fp16=self.use_fp16,
+                    use_cuda_kernel=self.use_cuda_kernel,
                     use_deepspeed=False
                 )
                 self.logger.info("✅ IndexTTS2模型加载完成")
+
+                # #region debug-point A:indextts2-init-ok
+                import json as _json, urllib.request as _ur, os as _os; _p='.dbg/voice-clone-page-close.env'; _u,_s='http://127.0.0.1:7778/event','voice-clone-page-close'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+                try: _ur.urlopen(_ur.Request(_u, data=_json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"A","location":"src/voice_cloner.py:_init_indexTTS2:ok","msg":"[DEBUG] VoiceCloner _init_indexTTS2 ok","data":{"model_device":getattr(self._model,'device',None)}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+                except Exception: pass
+                # #endregion
             else:
                 self.logger.info("✅ IndexTTS2模型已存在，复用现有实例")
             
@@ -113,6 +141,12 @@ class VoiceCloner:
             
         except Exception as e:
             self.logger.error(f"IndexTTS2初始化失败: {e}")
+
+            # #region debug-point B:indextts2-init-exception
+            import json as _json, urllib.request as _ur, os as _os; _p='.dbg/voice-clone-page-close.env'; _u,_s='http://127.0.0.1:7778/event','voice-clone-page-close'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+            try: _ur.urlopen(_ur.Request(_u, data=_json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"B","location":"src/voice_cloner.py:_init_indexTTS2:except","msg":"[DEBUG] VoiceCloner _init_indexTTS2 exception","data":{"error":str(e)}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+            except Exception: pass
+            # #endregion
             raise
     
     def _check_dependencies(self):
@@ -398,6 +432,12 @@ class VoiceCloner:
         
         self.logger.info(f"开始并行克隆 {len(segments)} 个音频段落")
         output_manager.log(f"步骤7开始: 并行音色克隆 {len(segments)} 个段落")
+
+        # #region debug-point A:clone-parallel-start
+        import json as _json, urllib.request as _ur, os as _os; _p='.dbg/voice-clone-page-close.env'; _u,_s='http://127.0.0.1:7778/event','voice-clone-page-close'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+        try: _ur.urlopen(_ur.Request(_u, data=_json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"A","location":"src/voice_cloner.py:clone_segments_parallel:start","msg":"[DEBUG] clone_segments_parallel start","data":{"segments_count":len(segments),"enable_parallel":self.enable_parallel,"max_parallel_workers":self.max_parallel_workers}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+        except Exception: pass
+        # #endregion
         
         # 记录开始时间
         start_time = time.time()
@@ -454,32 +494,43 @@ class VoiceCloner:
                             else:
                                 self.logger.error(f"段落 {i+1} 并行克隆失败: {result.get('error', '未知错误')}")
                                 output_manager.log(f"段落 {i+1} 并行克隆失败: {result.get('error', '未知错误')}")
+
+                                # #region debug-point B:clone-parallel-segment-fail
+                                import json as _json, urllib.request as _ur, os as _os; _p='.dbg/voice-clone-page-close.env'; _u,_s='http://127.0.0.1:7778/event','voice-clone-page-close'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+                                try: _ur.urlopen(_ur.Request(_u, data=_json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"B","location":"src/voice_cloner.py:clone_segments_parallel:segment_fail","msg":"[DEBUG] clone_segments_parallel segment failed","data":{"segment_index":i,"error":result.get("error")}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+                                except Exception: pass
+                                # #endregion
                                 
                         except Exception as e:
                             error_msg = str(e)
                             self.logger.error(f"段落 {i+1} 并行克隆异常: {error_msg}")
                             output_manager.log(f"段落 {i+1} 并行克隆异常: {error_msg}")
+
+                            # #region debug-point B:clone-parallel-segment-exception
+                            import json as _json, urllib.request as _ur, os as _os; _p='.dbg/voice-clone-page-close.env'; _u,_s='http://127.0.0.1:7778/event','voice-clone-page-close'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+                            try: _ur.urlopen(_ur.Request(_u, data=_json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"B","location":"src/voice_cloner.py:clone_segments_parallel:segment_exception","msg":"[DEBUG] clone_segments_parallel segment exception","data":{"segment_index":i,"error":error_msg}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+                            except Exception: pass
+                            # #endregion
                             
-                            # 如果是CUDA错误，等待并尝试清理GPU状态
-                            if "CUDA error" in error_msg or "device-side assert" in error_msg:
+                            # 如果是GPU运行时错误，等待并尝试清理GPU状态
+                            if is_gpu_runtime_error(error_msg):
                                 try:
                                     import torch
                                     if torch.cuda.is_available():
                                         # 等待GPU恢复
                                         time.sleep(1.0)
-                                        # 尝试重置CUDA错误状态
+                                        # 尝试重置底层运行时状态
                                         try:
                                             torch.cuda.synchronize()
                                         except:
                                             pass
-                                        # 清理GPU缓存
                                         try:
                                             torch.cuda.empty_cache()
-                                            self.logger.info(f"段落 {i+1} CUDA错误后已清理GPU状态")
+                                            self.logger.info(f"段落 {i+1} GPU错误后已清理运行时缓存")
                                         except Exception as cleanup_error:
                                             self.logger.warning(f"清理GPU状态时出错（可能GPU状态已损坏）: {cleanup_error}")
                                 except Exception as cleanup_error:
-                                    self.logger.warning(f"处理CUDA错误时出错: {cleanup_error}")
+                                    self.logger.warning(f"处理GPU错误时出错: {cleanup_error}")
                             
                             cloning_results.append({
                                 "success": False,
@@ -538,6 +589,12 @@ class VoiceCloner:
         except Exception as e:
             self.logger.error(f"并行克隆失败: {e}")
             output_manager.log(f"步骤7失败: {e}")
+
+            # #region debug-point B:clone-parallel-exception
+            import json as _json, urllib.request as _ur, os as _os; _p='.dbg/voice-clone-page-close.env'; _u,_s='http://127.0.0.1:7778/event','voice-clone-page-close'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+            try: _ur.urlopen(_ur.Request(_u, data=_json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"B","location":"src/voice_cloner.py:clone_segments_parallel:except","msg":"[DEBUG] clone_segments_parallel exception","data":{"error":str(e)}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+            except Exception: pass
+            # #endregion
             return {
                 "success": False,
                 "error": str(e),
@@ -551,8 +608,8 @@ class VoiceCloner:
         """
         线程安全的单个段落克隆方法
         
-        使用锁来保护GPU访问，避免CUDA错误污染GPU状态。
-        虽然IndexTTS2的infer方法本身是线程安全的，但CUDA错误会污染GPU状态，
+        使用锁来保护GPU访问，避免运行时错误污染GPU状态。
+        虽然IndexTTS2的infer方法本身是线程安全的，但底层GPU错误会污染GPU状态，
         导致其他并行任务也失败。使用锁可以确保同一时间只有一个线程访问GPU。
         
         Args:
@@ -594,7 +651,7 @@ class VoiceCloner:
                     "skipped": True
                 }
             
-            # 使用锁保护GPU访问，避免CUDA错误污染GPU状态
+            # 使用锁保护GPU访问，避免并发放大底层运行时错误
             with self._gpu_lock:
                 clone_result = self.clone_voice(audio_path, text, output_path)
             
@@ -656,28 +713,23 @@ class VoiceCloner:
             
         except RuntimeError as e:
             error_msg = str(e)
-            # 检查是否是CUDA错误
-            if "CUDA error" in error_msg or "device-side assert" in error_msg:
-                self.logger.error(f"IndexTTS2执行失败: CUDA错误 - {error_msg}")
-                # CUDA错误后，等待一段时间让GPU恢复，然后尝试清理
+            if is_gpu_runtime_error(error_msg):
+                self.logger.error(f"IndexTTS2执行失败: GPU运行时错误 - {error_msg}")
                 try:
                     import torch
                     if torch.cuda.is_available():
-                        # 等待GPU恢复（不立即清理，因为清理可能也会失败）
                         time.sleep(1.0)
-                        # 尝试重置CUDA错误状态
                         try:
                             torch.cuda.synchronize()
                         except:
                             pass
-                        # 清理GPU缓存
                         try:
                             torch.cuda.empty_cache()
-                            self.logger.info("已清理GPU缓存和同步CUDA状态")
+                            self.logger.info("已清理GPU缓存并完成运行时同步")
                         except Exception as cleanup_error:
                             self.logger.warning(f"清理GPU缓存时出错（可能GPU状态已损坏）: {cleanup_error}")
                 except Exception as cleanup_error:
-                    self.logger.warning(f"处理CUDA错误时出错: {cleanup_error}")
+                    self.logger.warning(f"处理GPU错误时出错: {cleanup_error}")
             else:
                 self.logger.error(f"IndexTTS2执行失败: {error_msg}")
             return False
@@ -714,8 +766,8 @@ from indextts.infer_v2 import IndexTTS2
 tts = IndexTTS2(
     cfg_path="checkpoints/config.yaml", 
     model_dir="checkpoints", 
-    use_fp16=True, 
-    use_cuda_kernel=True, 
+    use_fp16={str(self.use_fp16)},
+    use_cuda_kernel={str(self.use_cuda_kernel)},
     use_deepspeed=False
 )
 
@@ -777,7 +829,7 @@ import os
 os.environ['PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION'] = 'python'
 os.chdir('{index_tts_dir}')
 from indextts.infer_v2 import IndexTTS2
-tts = IndexTTS2(cfg_path="checkpoints/config.yaml", model_dir="checkpoints", use_fp16=True, use_cuda_kernel=True, use_deepspeed=False)
+tts = IndexTTS2(cfg_path="checkpoints/config.yaml", model_dir="checkpoints", use_fp16={str(self.use_fp16)}, use_cuda_kernel={str(self.use_cuda_kernel)}, use_deepspeed=False)
 tts.infer(spk_audio_prompt='{reference_audio}', text='{text}', output_path='{output_path}', verbose=True)
 """
             ]

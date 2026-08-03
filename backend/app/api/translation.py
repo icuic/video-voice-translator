@@ -185,6 +185,12 @@ def execute_translation_task(
     logger.info(f"开始执行翻译任务: task_id={task_id}, file_path={file_path}")
     import sys
     print(f"[LOG] 开始执行翻译任务: task_id={task_id}", file=sys.stderr, flush=True)  # 使用 stderr 并立即刷新
+
+    # #region debug-point A:task-entry
+    import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+    try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"A","location":"backend/app/api/translation.py:execute_translation_task:entry","msg":"[DEBUG] task thread entered","data":{"task_id":task_id,"file_path":file_path}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+    except Exception: pass
+    # #endregion
     
     try:
         # 立即更新任务状态
@@ -244,6 +250,14 @@ def execute_translation_task(
                 import sys
                 print(f"[LOG] 进度更新: task_id={task_id}, step={step_index}, progress={progress_pct:.1f}%, message={tasks[task_id]['message']}", file=sys.stderr, flush=True)
                 logger.info(f"进度更新: task_id={task_id}, step={step_index}, progress={progress_pct:.1f}%, message={tasks[task_id]['message']}")
+
+                # #region debug-point D:progress-update
+                import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+                try: 
+                    (step_index == 1) and urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"D","location":"backend/app/api/translation.py:update_progress","msg":"[DEBUG] step1 progress update","data":{"task_id":task_id,"step":step_index,"step_name":step_name,"progress_pct":progress_pct,"message":tasks[task_id].get("message",""),"current_segment":current_segment,"total_segments":total_segments}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+                except Exception: 
+                    pass
+                # #endregion
             else:
                 import sys
                 print(f"[ERROR] 任务不存在，无法更新进度: task_id={task_id}", file=sys.stderr, flush=True)
@@ -257,6 +271,12 @@ def execute_translation_task(
         
         logger.info(f"开始调用 translate_media: task_id={task_id}")
         print(f"[LOG] 开始调用 translate_media: task_id={task_id}", file=sys.stderr, flush=True)
+
+        # #region debug-point A:before-translate-media
+        import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+        try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"A","location":"backend/app/api/translation.py:execute_translation_task:before_translate_media","msg":"[DEBUG] calling translate_media","data":{"task_id":task_id,"input_path":file_path,"source_lang":source_lang,"target_lang":target_lang,"single_speaker":single_speaker}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+        except Exception: pass
+        # #endregion
 
         # 添加调试信息
         print(f"[DEBUG] 调用translate_media前: task_id={task_id}, file_path={file_path}", file=sys.stderr, flush=True)
@@ -273,6 +293,12 @@ def execute_translation_task(
             webui_mode=True,
             progress_callback=update_progress
         )
+
+        # #region debug-point A:after-translate-media
+        import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+        try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"A","location":"backend/app/api/translation.py:execute_translation_task:after_translate_media","msg":"[DEBUG] translate_media returned","data":{"task_id":task_id,"success":bool(result.get("success")),"error":result.get("error"),"needs_segment_editing":bool(result.get("needs_segment_editing")),"needs_editing":bool(result.get("needs_editing"))}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+        except Exception: pass
+        # #endregion
 
         print(f"[DEBUG] translate_media 返回: success={result.get('success', False)}, error={result.get('error', 'None')}", file=sys.stderr, flush=True)
         logger.info(f"translate_media 执行完成: task_id={task_id}, success={result.get('success', False)}")
@@ -322,6 +348,12 @@ def execute_translation_task(
         error_trace = traceback.format_exc()
         logger.error(f"任务执行失败: task_id={task_id}, error={error_msg}")
         logger.error(f"异常堆栈: {error_trace}")
+
+        # #region debug-point B:task-exception
+        import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+        try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"B","location":"backend/app/api/translation.py:execute_translation_task:except","msg":"[DEBUG] task exception","data":{"task_id":task_id,"error":error_msg,"trace":error_trace[-1800:]}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+        except Exception: pass
+        # #endregion
         
         if task_id in tasks:
             tasks[task_id]["status"] = "failed"
@@ -393,5 +425,4 @@ async def get_translation_result(task_id: str):
         "audio_path": task.get("final_audio_path"),
         "task_dir": task.get("task_dir"),
     }
-
 

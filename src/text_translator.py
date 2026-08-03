@@ -8,6 +8,7 @@ import logging
 import json
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+import yaml
 from .utils import validate_file_path, create_output_dir, safe_filename
 from .output_manager import OutputManager, StepNumbers
 
@@ -27,9 +28,17 @@ class TextTranslator:
         
         # 翻译配置
         self.translation_config = config.get("translation", {})
+        self.external_llm_config = self._load_external_llm_config()
+        self.external_llm_env = self._load_external_llm_env()
         self.source_language = self.translation_config.get("source_language", "zh")
         self.target_language = self.translation_config.get("target_language", "zh")  # 修复：默认值改为zh
-        self.translation_model = self.translation_config.get("model", "qwen-flash")
+        self.translation_model = self._get_llm_setting("model", "qwen-flash")
+        self.translation_base_url = self._get_llm_setting(
+            "base_url",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        )
+        self.translation_timeout = float(self._get_llm_setting("timeout", 300.0))
+        self.translation_api_key = self._resolve_api_key()
         
         # 重试策略配置
         self.retry_strategy = self.translation_config.get("retry_strategy", "adaptive")
@@ -40,9 +49,112 @@ class TextTranslator:
         self.logger.info(f"翻译重试策略: {self.retry_strategy}")
         self.logger.info(f"最大批量大小: {self.max_batch_size}")
         self.logger.info(f"翻译模型版本: {self.translation_model}")
+        self.logger.info(f"翻译接口地址: {self.translation_base_url}")
         
         # 初始化翻译引擎
         self._init_translation_engine()
+
+    def _project_root(self) -> Path:
+        """返回项目根目录。"""
+        return Path(__file__).resolve().parent.parent
+
+    def _load_external_llm_config(self) -> Dict[str, Any]:
+        """从可选外部文件加载 LLM 配置。"""
+        config_path = self.translation_config.get("llm_config_file")
+        if not config_path:
+            return {}
+
+        llm_config_path = Path(config_path).expanduser()
+        if not llm_config_path.is_absolute():
+            llm_config_path = self._project_root() / llm_config_path
+
+        if not llm_config_path.exists():
+            raise FileNotFoundError(f"LLM 配置文件不存在: {llm_config_path}")
+
+        with open(llm_config_path, "r", encoding="utf-8") as f:
+            if llm_config_path.suffix.lower() == ".json":
+                llm_config = json.load(f)
+            else:
+                llm_config = yaml.safe_load(f)
+
+        if llm_config is None:
+            return {}
+        if not isinstance(llm_config, dict):
+            raise ValueError(f"LLM 配置文件格式不正确，需为对象/字典: {llm_config_path}")
+
+        self.logger.info(f"已加载外部 LLM 配置文件: {llm_config_path}")
+        return llm_config
+
+    def _load_external_llm_env(self) -> Dict[str, str]:
+        """从可选 .env 文件加载 LLM 配置。"""
+        env_path = self.translation_config.get("llm_env_file")
+        if not env_path:
+            return {}
+
+        llm_env_path = Path(env_path).expanduser()
+        if not llm_env_path.is_absolute():
+            llm_env_path = self._project_root() / llm_env_path
+
+        if not llm_env_path.exists():
+            raise FileNotFoundError(f"LLM .env 文件不存在: {llm_env_path}")
+
+        env_values: Dict[str, str] = {}
+        with open(llm_env_path, "r", encoding="utf-8") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+
+                if line.startswith("export "):
+                    line = line[len("export "):].strip()
+
+                if "=" not in line:
+                    continue
+
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip().strip("'").strip('"')
+                env_values[key] = value
+
+        self.logger.info(f"已加载外部 LLM .env 文件: {llm_env_path}")
+        return env_values
+
+    def _get_llm_setting(self, key: str, default: Any) -> Any:
+        """获取 LLM 配置项；指定外部文件时由文件优先。"""
+        if self.external_llm_config:
+            return self.external_llm_config.get(key, self.translation_config.get(key, default))
+
+        env_key_map = {
+            "base_url": "LLM_BASE_URL",
+            "model": "LLM_MODEL",
+            "api_key": "LLM_API_KEY",
+            "api_key_env": "LLM_API_KEY_ENV",
+            "timeout": "LLM_TIMEOUT",
+        }
+        env_key = env_key_map.get(key)
+        if env_key and env_key in self.external_llm_env:
+            return self.external_llm_env[env_key]
+
+        return self.translation_config.get(key, default)
+
+    def _resolve_api_key(self) -> Optional[str]:
+        """解析 API Key，优先读 api_key_env，再回退到 api_key。"""
+        api_key_env = self._get_llm_setting("api_key_env", "DASHSCOPE_API_KEY")
+        if api_key_env:
+            if api_key_env in self.external_llm_env and self.external_llm_env[api_key_env]:
+                return self.external_llm_env[api_key_env]
+            api_key = os.getenv(api_key_env)
+            if api_key:
+                return api_key
+
+        api_key = self._get_llm_setting("api_key", None)
+        if api_key:
+            return api_key
+
+        # 保持对历史配置的兼容。
+        if "DASHSCOPE_API_KEY" in self.external_llm_env:
+            return self.external_llm_env["DASHSCOPE_API_KEY"]
+        return os.getenv("DASHSCOPE_API_KEY")
     
     def _init_translation_engine(self):
         """初始化翻译引擎"""
@@ -50,21 +162,16 @@ class TextTranslator:
             self.logger.info(f"使用 {self.translation_model} 大模型翻译引擎")
             try:
                 from openai import OpenAI
-                import os
-                # 从环境变量读取API密钥
-                api_key = os.getenv("DASHSCOPE_API_KEY")
-                if not api_key:
+                if not self.translation_api_key:
                     raise ValueError(
-                        "未设置DASHSCOPE_API_KEY环境变量。"
-                        "请通过以下方式设置：\n"
-                        "  export DASHSCOPE_API_KEY='your-api-key'\n"
-                        "或在代码运行前设置环境变量。"
-                        "获取API密钥请访问：https://dashscope.console.aliyun.com/"
+                        "未找到可用的 LLM API Key。"
+                        "请在 translation.llm_config_file 指向的文件中配置 api_key/api_key_env，"
+                        "或设置环境变量 DASHSCOPE_API_KEY。"
                     )
                 self.translator = OpenAI(
-                    api_key=api_key,
-                    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-                    timeout=300.0,  # 增加超时时间到5分钟，处理大批量翻译
+                    api_key=self.translation_api_key,
+                    base_url=self.translation_base_url,
+                    timeout=self.translation_timeout,
                 )
                 self.logger.info(f"{self.translation_model}翻译引擎初始化成功")
             except Exception as e:
@@ -1299,4 +1406,3 @@ class TextTranslator:
         except Exception as e:
             self.logger.error(f"解析翻译结果失败: {e}")
             return []
-

@@ -26,11 +26,11 @@ audio_merger:
 
 # Whisper语音识别配置
 whisper:
-  backend: "faster-whisper"  # 后端选择: "whisper" 或 "faster-whisper"
+  backend: "whisper"         # AMD/ROCm 默认推荐原生 Whisper；NVIDIA 可改回 faster-whisper
   model_size: "medium"       # 模型大小: tiny, base, small, medium, large, large-v2, large-v3
   language: "auto"           # 语言检测: auto 或具体语言代码
   task: "transcribe"         # 任务类型: transcribe 或 translate
-  device: "cuda"             # 设备: auto, cpu, cuda
+  device: "auto"             # 设备: auto, cpu, cuda（ROCm 下 PyTorch 仍使用 cuda 字符串）
   fp16: false                # 启用FP16精度加速 (true/false) - 可提升1.5-2倍速度，需要GPU支持
   use_llm_optimization: true # 启用LLM分段优化
   
@@ -64,7 +64,7 @@ speaker_diarization:
   model: "pyannote/speaker-diarization-3.1"  # 分离模型
   min_speakers: 2            # 最少说话者数量
   max_speakers: 4            # 最多说话者数量
-  device: "cuda"             # 设备: cpu, cuda
+  device: "auto"             # 设备: auto, cpu, cuda
 
 # 按人音轨配置（步骤3）
 speaker_tracks:
@@ -95,6 +95,14 @@ defaults:
 translation:
   source_language: "zh"
   target_language: "en"
+  # 可选：从未纳入 git 的 .env 文件读取 LLM 配置。
+  # 支持键名：LLM_BASE_URL、LLM_MODEL、LLM_API_KEY、LLM_API_KEY_ENV、LLM_TIMEOUT
+  # 也支持直接放 DASHSCOPE_API_KEY 这类供应商环境变量名。
+  llm_env_file: "./.env"
+  # 可选：从单独文件读取 LLM 配置。支持 yaml/yml/json。
+  # 配置项可包含：base_url、model、api_key、api_key_env、timeout
+  # 设置后，文件中的 LLM 配置优先于本节里的 model/base_url 等字段。
+  # llm_config_file: "./llm.dashscope.example.yaml"
   model: "qwen-plus-2025-07-14"  # 支持的其他选项: qwen-plus, qwen-max, qwen-turbo
   
   # 重试策略配置
@@ -110,10 +118,13 @@ translation:
 # 音色克隆配置
 voice_cloning:
   model_path: "./index-tts"  # IndexTTS2模型目录（相对于项目根目录）
-  # 注意：device 配置已移除，IndexTTS2 会自动检测并使用可用的设备（CUDA/CPU）
+  # 注意：device 配置已移除，IndexTTS2 会自动检测并使用可用的设备（CUDA/ROCm/CPU）
   sample_rate: 16000
   max_text_tokens: 600
   max_mel_tokens: 1815
+  use_fp16: true
+  # 仅在 NVIDIA CUDA 环境中建议启用；AMD/ROCm 默认由代码自动关闭
+  use_cuda_kernel: false
   
   # 并行克隆配置
   enable_parallel: false  # 由于使用锁保护GPU访问，实际是串行处理，直接禁用并行避免线程开销
@@ -170,6 +181,3 @@ gpu_monitor:
   enable: true
   log_interval: 10
   safety_margin_gb: 5.0
-
-
-

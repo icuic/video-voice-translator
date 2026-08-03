@@ -72,6 +72,10 @@ index-tts/assets/
 *.key
 *.secret
 
+# 调试产物
+.dbg/
+debug-*.md
+
 # 临时文件和日志
 *.tmp
 *.temp

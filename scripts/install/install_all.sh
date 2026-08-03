@@ -73,8 +73,8 @@ if [ -f "${PROJECT_ROOT}/index-tts/.venv/bin/activate" ]; then
     cd "${PROJECT_ROOT}/index-tts"
     source .venv/bin/activate
     
-    if python -c "import torch; print(f'✅ PyTorch 已安装: {torch.__version__}'); print(f'   CUDA 可用: {torch.cuda.is_available()}')" 2>/dev/null; then
-        python -c "import torch; print(f'✅ PyTorch 已安装: {torch.__version__}'); print(f'   CUDA 可用: {torch.cuda.is_available()}')"
+    if python -c "import torch; kind = 'AMD ROCm' if getattr(torch.version, 'hip', None) else ('NVIDIA CUDA' if getattr(torch.version, 'cuda', None) else 'CPU'); print(f'✅ PyTorch 已安装: {torch.__version__}'); print(f'   GPU 可用: {torch.cuda.is_available()}'); print(f'   运行后端: {kind}')" 2>/dev/null; then
+        python -c "import torch; kind = 'AMD ROCm' if getattr(torch.version, 'hip', None) else ('NVIDIA CUDA' if getattr(torch.version, 'cuda', None) else 'CPU'); print(f'✅ PyTorch 已安装: {torch.__version__}'); print(f'   GPU 可用: {torch.cuda.is_available()}'); print(f'   运行后端: {kind}')"
     else
         echo "⚠️  PyTorch 未安装或无法导入"
         echo "   这可能是正常的，IndexTTS2 依赖安装时会自动安装 PyTorch"
@@ -184,4 +184,3 @@ echo "如果遇到问题，请查看："
 echo "- 安装文档: docs/INSTALL.md"
 echo "- IndexTTS2 官方文档: https://github.com/index-tts/index-tts"
 echo ""
-

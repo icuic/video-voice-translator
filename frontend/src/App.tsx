@@ -36,6 +36,55 @@ function App() {
   const regenerateCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null); // 存储重新生成检查的定时器引用
   const hasShownRegenerateAlertRef = useRef<boolean>(false); // 标记是否已经显示过重新生成完成的提示
 
+  // #region debug-point D:global-error-handlers
+  useEffect(() => {
+    const report = (payload: any) => {
+      try {
+        fetch('http://127.0.0.1:7778/event', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId: 'voice-clone-page-close',
+            runId: 'pre-fix',
+            hypothesisId: 'D',
+            location: 'frontend/src/App.tsx:global',
+            msg: '[DEBUG] frontend error captured',
+            data: payload,
+            ts: Date.now(),
+          }),
+        }).catch(() => {});
+      } catch (_) {}
+    };
+
+    const onError = (event: ErrorEvent) => {
+      report({
+        type: 'error',
+        message: event.message,
+        filename: event.filename,
+        lineno: event.lineno,
+        colno: event.colno,
+      });
+    };
+
+    const onUnhandledRejection = (event: PromiseRejectionEvent) => {
+      report({
+        type: 'unhandledrejection',
+        reason: String(event.reason),
+      });
+    };
+
+    window.addEventListener('error', onError);
+    window.addEventListener('unhandledrejection', onUnhandledRejection);
+
+    report({ type: 'mounted', href: window.location.href });
+
+    return () => {
+      window.removeEventListener('error', onError);
+      window.removeEventListener('unhandledrejection', onUnhandledRejection);
+    };
+  }, []);
+  // #endregion
+
   // 根据当前选择的视频源更新实际播放的 src
   useEffect(() => {
     if (videoSource === 'dubbed' && dubbedVideoUrl) {
@@ -64,7 +113,7 @@ function App() {
 
       // 建立 WebSocket 连接
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/api/websocket/${taskId}`;
+      const wsUrl = `${protocol}//${window.location.host}/ws/${taskId}`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 

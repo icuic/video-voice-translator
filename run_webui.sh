@@ -48,17 +48,22 @@ export PYTHONUNBUFFERED=1
 # 修复protobuf兼容性问题（IndexTTS2需要）
 export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
 
-# 检查DASHSCOPE_API_KEY是否已设置
-if [ -z "$DASHSCOPE_API_KEY" ]; then
-    echo "⚠️  警告: DASHSCOPE_API_KEY未设置，翻译功能将无法使用"
-    echo "   请在 ~/.bashrc 中设置: export DASHSCOPE_API_KEY='your-api-key'"
-else
+LLM_ENV_FILE="${PROJECT_ROOT}/.env"
+if [ -n "${DASHSCOPE_API_KEY:-}" ]; then
     echo "✅ DASHSCOPE_API_KEY已设置（长度: ${#DASHSCOPE_API_KEY}）"
+elif [ -f "${LLM_ENV_FILE}" ] && grep -Eq '^(LLM_API_KEY|LLM_API_KEY_ENV)=' "${LLM_ENV_FILE}"; then
+    echo "✅ 检测到项目级 .env 翻译配置: ${LLM_ENV_FILE}"
+else
+    echo "⚠️  警告: 未检测到可用的翻译 LLM 凭据"
+    echo "   可在 ${LLM_ENV_FILE} 中配置 LLM_API_KEY 或 LLM_API_KEY_ENV"
+    echo "   也可在 ~/.bashrc 中设置: export DASHSCOPE_API_KEY='your-api-key'"
 fi
 
-# CUDA/CuDNN 运行时库路径
-export LD_LIBRARY_PATH="${INDEX_TTS_DIR}/.venv/lib/python3.10/site-packages/nvidia/cudnn/lib:/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
-export PATH="/usr/local/cuda/bin:${PATH}"
+# 为 NVIDIA 环境补充可选 CuDNN 路径；AMD/ROCm 和 CPU 环境保持系统默认配置
+NVIDIA_CUDNN_DIR="${INDEX_TTS_DIR}/.venv/lib/python3.10/site-packages/nvidia/cudnn/lib"
+if [ -d "${NVIDIA_CUDNN_DIR}" ]; then
+    export LD_LIBRARY_PATH="${NVIDIA_CUDNN_DIR}:${LD_LIBRARY_PATH}"
+fi
 
 # 返回项目目录
 cd "${PROJECT_ROOT}"
@@ -152,5 +157,3 @@ echo "📝 系统日志将保存到: ${SYSTEM_LOG}"
 
 # 使用新的媒体化入口
 python media_translation_webui.py --host 0.0.0.0 --port 7861 --output-dir data/outputs --verbose --preload-models 2>&1 | tee "${SYSTEM_LOG}"
-
-

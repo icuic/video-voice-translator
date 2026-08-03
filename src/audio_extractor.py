@@ -50,6 +50,12 @@ class AudioExtractor:
 
         self.logger.info(f"开始音频提取: {input_path} -> {output_path}")
 
+        # #region debug-point A:audio-extractor-entry
+        import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+        try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"A","location":"src/audio_extractor.py:extract:entry","msg":"[DEBUG] audio_extractor.extract entry","data":{"input_path":input_path,"output_path":output_path,"has_progress_cb":bool(progress_callback)}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+        except Exception: pass
+        # #endregion
+
         # 创建输出目录
         create_output_dir(os.path.dirname(output_path))
 
@@ -68,10 +74,22 @@ class AudioExtractor:
 
             result["progress_reported"] = progress_reported
             self.logger.info("音频提取完成")
+
+            # #region debug-point A:audio-extractor-exit
+            import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+            try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"A","location":"src/audio_extractor.py:extract:exit","msg":"[DEBUG] audio_extractor.extract exit","data":{"success":bool(result.get("success")),"extraction_type":result.get("extraction_type"),"duration":result.get("duration"),"output_size":result.get("output_size"),"progress_reported":result.get("progress_reported")}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+            except Exception: pass
+            # #endregion
             return result
 
         except Exception as e:
             self.logger.error(f"音频提取失败: {e}")
+
+            # #region debug-point B:audio-extractor-exception
+            import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+            try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"B","location":"src/audio_extractor.py:extract:except","msg":"[DEBUG] audio_extractor.extract exception","data":{"error":str(e)}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+            except Exception: pass
+            # #endregion
             raise
     
     def _is_audio_file(self, file_ext: str) -> bool:
@@ -102,6 +120,12 @@ class AudioExtractor:
             except Exception as e:
                 self.logger.warning(f"无法获取视频时长: {e}")
 
+            # #region debug-point C:ffprobe-duration
+            import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+            try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"C","location":"src/audio_extractor.py:_extract_audio_from_video:duration","msg":"[DEBUG] ffprobe duration result","data":{"video_path":video_path,"duration":duration,"has_progress_cb":bool(progress_callback)}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+            except Exception: pass
+            # #endregion
+
             # 构建FFmpeg命令
             input_stream = ffmpeg.input(video_path)
 
@@ -118,12 +142,28 @@ class AudioExtractor:
                 f=self.format         # 输出格式
             )
 
+            # #region debug-point A:ffmpeg-compiled
+            import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+            try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"A","location":"src/audio_extractor.py:_extract_audio_from_video:compiled","msg":"[DEBUG] ffmpeg command compiled","data":{"output_path":output_path,"duration":duration,"sample_rate":self.sample_rate,"channels":self.channels,"format":self.format,"has_progress_cb":bool(progress_callback)}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+            except Exception: pass
+            # #endregion
+
             # 执行转换，捕获进度信息
             if progress_callback and duration > 0:
                 self._run_ffmpeg_with_progress(output_stream, duration, progress_callback)
             else:
                 # 不显示进度时使用安静模式
+                # #region debug-point A:ffmpeg-run-quiet
+                import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+                try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"A","location":"src/audio_extractor.py:_extract_audio_from_video:ffmpeg_run","msg":"[DEBUG] ffmpeg.run quiet start","data":{"video_path":video_path,"output_path":output_path,"duration":duration}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+                except Exception: pass
+                # #endregion
                 ffmpeg.run(output_stream, overwrite_output=True, quiet=True)
+                # #region debug-point A:ffmpeg-run-quiet-done
+                import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+                try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"A","location":"src/audio_extractor.py:_extract_audio_from_video:ffmpeg_run_done","msg":"[DEBUG] ffmpeg.run quiet done","data":{"output_path":output_path}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+                except Exception: pass
+                # #endregion
 
             # 获取输出文件信息
             output_size = os.path.getsize(output_path)
@@ -159,6 +199,12 @@ class AudioExtractor:
 
         # 获取 FFmpeg 命令
         cmd = ffmpeg.compile(output_stream, overwrite_output=True)
+
+        # #region debug-point A:ffmpeg-progress-start
+        import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+        try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"A","location":"src/audio_extractor.py:_run_ffmpeg_with_progress:start","msg":"[DEBUG] ffmpeg progress mode start","data":{"cmd":cmd,"duration":duration}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+        except Exception: pass
+        # #endregion
 
         # 运行 FFmpeg，捕获 stderr（进度信息输出到 stderr）
         process = subprocess.Popen(
@@ -204,6 +250,12 @@ class AudioExtractor:
             # 读取剩余的错误输出
             error_output = process.stderr.read()
             raise RuntimeError(f"FFmpeg 失败，返回码: {return_code}, 错误: {error_output}")
+
+        # #region debug-point A:ffmpeg-progress-done
+        import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+        try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"A","location":"src/audio_extractor.py:_run_ffmpeg_with_progress:done","msg":"[DEBUG] ffmpeg progress mode done","data":{"return_code":return_code,"last_progress":last_progress}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+        except Exception: pass
+        # #endregion
     
     def _convert_audio(self, input_path: str, output_path: str) -> Dict[str, Any]:
         """
@@ -317,6 +369,5 @@ class AudioExtractor:
             progress_callback(100.0, "音频提取完成")
 
         return result
-
 
 

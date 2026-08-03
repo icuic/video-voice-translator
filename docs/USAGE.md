@@ -27,12 +27,21 @@
 **方式二：前后端分离模式**：
 
 ```bash
-./start.sh
+./service.sh up
 ```
 
 - 前端界面：`http://localhost:5173`
 - 后端 API：`http://localhost:8000`
 - API 文档：`http://localhost:8000/docs`
+
+常用管理命令：
+
+```bash
+./service.sh status
+./service.sh restart
+./service.sh logs
+./service.sh down
+```
 
 **方式三：命令行方式**：
 
@@ -98,7 +107,7 @@ Web UI 提供了友好的图形界面，适合不熟悉命令行的用户使用�
 #### 启动服务
 
 ```bash
-./start.sh
+./service.sh up
 ```
 
 启动脚本会自动：
@@ -106,12 +115,25 @@ Web UI 提供了友好的图形界面，适合不熟悉命令行的用户使用�
 - 检查并安装前端依赖（如果 `node_modules` 不存在）
 - 启动后端服务（端口 8000）
 - 启动前端服务（端口 5173）
+- 自动写入日志到 `data/logs/backend.log` 与 `data/logs/frontend.log`
+- 自动记录 PID 到 `data/run/`
 
 #### 访问服务
 
-- **前端界面**：`http://localhost:5173` 或 `http://<服务器IP>:5173`
+- **前端界面**：`http://localhost:5173`
 - **后端 API**：`http://localhost:8000`
 - **API 文档**：`http://localhost:8000/docs`（Swagger UI）
+
+如果服务跑在云服务器上，推荐使用 SSH 端口转发访问：
+
+```bash
+ssh -i <私钥> -p <SSH端口> <用户>@<服务器IP> -L 5173:127.0.0.1:5173 -L 8000:127.0.0.1:8000 -N
+```
+
+然后在本地浏览器访问：
+
+- `http://127.0.0.1:5173`
+- `http://127.0.0.1:8000/docs`
 
 #### 单独启动服务
 
@@ -230,7 +252,7 @@ python media_translation_cli.py input.mp4 --source-lang en --target-lang zh
 ⚠️ **注意**：直接运行 `python media_translation_cli.py` 会漏掉以下重要步骤：
 - 激活 IndexTTS2 虚拟环境
 - 设置 HuggingFace 镜像地址
-- 配置 CUDA/CuDNN 运行时库路径
+- 按当前环境补充可选 GPU 运行时库路径（如 NVIDIA CuDNN）
 - 检查并安装缺失的依赖
 
 因此，**强烈推荐使用启动脚本** `./run_cli.sh`。
@@ -294,4 +316,3 @@ python media_translation_cli.py input.mp4 --source-lang en --target-lang zh
 - [README.md](../README.md) - 项目主文档
 - [安装指南](INSTALL.md) - 详细的安装和配置说明
 - [流程文档](WORKFLOW.md) - 完整的9步骤流程说明和设计要点
-

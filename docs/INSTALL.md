@@ -4,7 +4,7 @@
 
 - **系统内存（RAM）**：至少 8GB（推荐 16GB 或更多）
 - **磁盘空间**：至少 30GB（用于模型文件约 5.5GB、虚拟环境约 9GB、依赖和缓存等）
-- **GPU**：NVIDIA GPU，显存至少 8GB（推荐 RTX 3060/4060 或更高型号，CPU 模式运行会很慢）
+- **GPU**：推荐 8GB 及以上显存的独立 GPU；本分支优先支持 AMD Radeon/ROCm，NVIDIA CUDA 仍可运行，CPU 模式会明显变慢
 
 ## 推荐配置
 
@@ -12,9 +12,15 @@
 
 - **系统内存（RAM）**：38GB
 - **磁盘空间**：128GB
-- **GPU**：NVIDIA Tesla V100-SXM2-32GB（32GB 显存）
+- **GPU**：8GB 以上显存的 AMD Radeon / AMD Instinct / NVIDIA GPU
 - **CPU**：10 核
 - **Python**：3.10.11
+
+## AMD / ROCm 说明
+
+- 本分支默认将 `config.yaml` 中的 `whisper.backend` 设为 `whisper`，以便优先复用 PyTorch 的 ROCm 能力
+- 如果在 AMD/ROCm 环境中运行，`IndexTTS2` 的 CUDA kernel 会默认关闭，避免误用 NVIDIA 专用优化
+- ROCm 下 PyTorch 仍通过 `torch.cuda` 命名空间暴露 GPU，因此日志中看到 `cuda` 设备字符串是正常现象
 
 ## 一键安装（推荐）
 
@@ -166,29 +172,31 @@ cd ..
 
 ### 五、环境变量配置
 
-### DASHSCOPE_API_KEY 配置（翻译功能必需）
+### 翻译 LLM 配置（必需）
 
-本项目使用阿里云 DashScope（Qwen）API 进行文本翻译，需要配置 API 密钥。
+推荐把翻译模型配置放在项目根目录的 `.env` 中。该文件默认不会被 git 跟踪。
 
-**获取 API 密钥**：
+示例：
 
-1. 访问 [阿里云 DashScope 控制台](https://dashscope.console.aliyun.com/)
-2. 注册/登录账号
-3. 创建 API 密钥
-4. 复制 API 密钥
-
-**配置方式**：
-
-在 `~/.bashrc` 文件中添加：
-
-```bash
-export DASHSCOPE_API_KEY='your-api-key-here'
+```dotenv
+LLM_BASE_URL=https://developer.amd.com.cn/radeon/api/v1
+LLM_MODEL=DeepSeek-V4-Flash
+LLM_API_KEY=your-api-key-here
+LLM_TIMEOUT=300.0
 ```
 
-然后重新加载配置：
+如果你不想把 key 直接写进 `.env`，也可以这样：
+
+```dotenv
+LLM_BASE_URL=https://developer.amd.com.cn/radeon/api/v1
+LLM_MODEL=DeepSeek-V4-Flash
+LLM_API_KEY_ENV=RADEON_API_KEY
+```
+
+然后在 shell 环境中设置：
 
 ```bash
-source ~/.bashrc
+export RADEON_API_KEY='your-api-key-here'
 ```
 
 ## 下一步
@@ -203,7 +211,7 @@ source ~/.bashrc
 
 - **使用前后端分离模式**（需要 Node.js 和前端依赖）：
   ```bash
-  ./start.sh
+  ./service.sh up
   ```
   前端：`http://localhost:5173`，后端 API：`http://localhost:8000`
 

@@ -30,6 +30,12 @@ class EnhancedMediaProcessor(MediaProcessor):
                                    progress_callback: Optional[callable] = None) -> Dict[str, Any]:
         self.logger.info(f"开始增强处理: {input_path}")
 
+        # #region debug-point A:enhanced-media-entry
+        import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+        try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"A","location":"src/enhanced_media_processor.py:process_with_output_manager:entry","msg":"[DEBUG] enhanced media processor entry","data":{"input_path":input_path}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+        except Exception: pass
+        # #endregion
+
         if not validate_file_path(input_path):
             raise FileNotFoundError(f"输入文件不存在: {input_path}")
 
@@ -39,8 +45,20 @@ class EnhancedMediaProcessor(MediaProcessor):
         try:
             self.logger.info("执行基础媒体处理...")
             audio_path = output_manager.get_file_path(StepNumbers.STEP_1, "audio")
+
+            # #region debug-point A:audio-extract-call
+            import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+            try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"A","location":"src/enhanced_media_processor.py:audio_extractor.extract:before","msg":"[DEBUG] calling audio_extractor.extract","data":{"input_path":input_path,"audio_path":audio_path,"has_progress_cb":bool(progress_callback)}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+            except Exception: pass
+            # #endregion
             audio_result = self.audio_extractor.extract(input_path, audio_path, progress_callback)
             output_manager.log(f"步骤1完成: 音频已提取到 {audio_path}")
+
+            # #region debug-point A:audio-extract-return
+            import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+            try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"A","location":"src/enhanced_media_processor.py:audio_extractor.extract:after","msg":"[DEBUG] audio_extractor.extract returned","data":{"success":bool(audio_result.get("success")),"extraction_type":audio_result.get("extraction_type"),"duration":audio_result.get("duration"),"output_size":audio_result.get("output_size")}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+            except Exception: pass
+            # #endregion
 
             separation_needed = False
             separation_result = None
@@ -93,6 +111,12 @@ class EnhancedMediaProcessor(MediaProcessor):
         except Exception as e:
             self.logger.error(f"增强处理失败: {e}")
             output_manager.log(f"处理失败: {e}")
+
+            # #region debug-point B:enhanced-media-exception
+            import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+            try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"B","location":"src/enhanced_media_processor.py:process_with_output_manager:except","msg":"[DEBUG] enhanced media exception","data":{"error":str(e)}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+            except Exception: pass
+            # #endregion
             return {
                 "success": False,
                 "error": str(e),
@@ -101,4 +125,3 @@ class EnhancedMediaProcessor(MediaProcessor):
                 "separation_needed": False,
                 "separation_result": None
             }
-

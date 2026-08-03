@@ -165,8 +165,6 @@ export const Timeline: React.FC<TimelineProps> = ({
     const containerLeft = container.scrollLeft;
     const containerRight = containerLeft + container.clientWidth;
     const playheadLeft = playheadPosition - 50; // 留一些边距
-    const playheadRight = playheadPosition + 50;
-
     if (playheadPosition < containerLeft || playheadPosition > containerRight) {
       container.scrollTo({
         left: playheadLeft,
@@ -415,4 +413,3 @@ export const Timeline: React.FC<TimelineProps> = ({
     </div>
   );
 };
-

@@ -24,9 +24,11 @@ export HF_ENDPOINT="https://hf-mirror.com"
 export HF_HOME="${INDEX_TTS_DIR}/.cache/hf"
 export PYTHONUNBUFFERED=1
 
-# CUDA/CuDNN 运行时库路径
-export LD_LIBRARY_PATH="${INDEX_TTS_DIR}/.venv/lib/python3.10/site-packages/nvidia/cudnn/lib:/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
-export PATH="/usr/local/cuda/bin:${PATH}"
+# 为 NVIDIA 环境补充可选 CuDNN 路径；AMD/ROCm 和 CPU 环境保持系统默认配置
+NVIDIA_CUDNN_DIR="${INDEX_TTS_DIR}/.venv/lib/python3.10/site-packages/nvidia/cudnn/lib"
+if [ -d "${NVIDIA_CUDNN_DIR}" ]; then
+    export LD_LIBRARY_PATH="${NVIDIA_CUDNN_DIR}:${LD_LIBRARY_PATH}"
+fi
 
 # 返回项目目录
 cd "${PROJECT_ROOT}"
@@ -69,4 +71,3 @@ else:
     print('   系统仍可运行，但首次翻译时会重新加载模型')
     sys.exit(1)
 "
-

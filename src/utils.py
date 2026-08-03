@@ -69,7 +69,7 @@ def validate_config(config: Dict[str, Any]) -> None:
             logging.warning("翻译配置缺少source_language")
         if 'target_language' not in translation_config:
             logging.warning("翻译配置缺少target_language")
-        if 'model' not in translation_config:
+        if 'model' not in translation_config and 'llm_config_file' not in translation_config:
             logging.warning("翻译配置缺少model")
     
     # 验证音色克隆配置
@@ -394,6 +394,5 @@ def apply_language_settings(config: dict, source_lang: str, target_lang: str, vo
     config['voice_cloning']['model'] = voice_model
     
     return config
-
 
 

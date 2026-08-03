@@ -19,6 +19,12 @@ class Step1AudioExtraction(BaseStep):
     
     def execute(self) -> Dict[str, Any]:
         """执行步骤1: 音频提取"""
+
+        # #region debug-point A:step1-entry
+        import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+        try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"A","location":"src/pipeline/step1_audio_extraction.py:execute:entry","msg":"[DEBUG] step1 execute entered","data":{"input_path":getattr(self.context,'input_path',None),"is_video":bool(getattr(self.context,'is_video',False))}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+        except Exception: pass
+        # #endregion
         
         # 保存原始输入文件
         original_file = self.context.save_original_input()
@@ -40,6 +46,11 @@ class Step1AudioExtraction(BaseStep):
 
         # 处理视频或音频文件
         if self.context.is_video:
+            # #region debug-point A:step1-video-branch
+            import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+            try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"A","location":"src/pipeline/step1_audio_extraction.py:execute:is_video","msg":"[DEBUG] step1 is_video branch","data":{"input_path":self.context.input_path}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+            except Exception: pass
+            # #endregion
             # 视频文件：使用EnhancedMediaProcessor提取音频
             from ..enhanced_media_processor import EnhancedMediaProcessor
             media_processor = EnhancedMediaProcessor(self.config)
@@ -50,6 +61,11 @@ class Step1AudioExtraction(BaseStep):
             )
 
             if not result.get("success"):
+                # #region debug-point B:step1-video-failed
+                import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+                try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"B","location":"src/pipeline/step1_audio_extraction.py:execute:video_result","msg":"[DEBUG] step1 video result failed","data":{"error":result.get("error"),"keys":sorted(list(result.keys()))}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+                except Exception: pass
+                # #endregion
                 return {
                     "success": False,
                     "error": result.get("error", "视频处理失败")
@@ -70,6 +86,11 @@ class Step1AudioExtraction(BaseStep):
             audio_path = result['audio_path']
             
         else:
+            # #region debug-point A:step1-audio-branch
+            import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+            try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"A","location":"src/pipeline/step1_audio_extraction.py:execute:is_audio","msg":"[DEBUG] step1 is_audio branch","data":{"input_path":self.context.input_path}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+            except Exception: pass
+            # #endregion
             # 音频文件：直接复制到任务目录
             # 报告开始进度
             if progress_callback:
@@ -110,6 +131,12 @@ class Step1AudioExtraction(BaseStep):
                 progress_callback(1, "步骤1: 音频提取", 100, "音频提取完成", 0, 0)
         
         self.output_manager.log(f"步骤1完成: 音频已提取到 {audio_path}")
+
+        # #region debug-point A:step1-exit
+        import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
+        try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"A","location":"src/pipeline/step1_audio_extraction.py:execute:exit","msg":"[DEBUG] step1 execute exit","data":{"audio_path":audio_path,"metadata_file":locals().get("metadata_file"),"duration":(metadata or {}).get("duration") if "metadata" in locals() else None}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
+        except Exception: pass
+        # #endregion
         
         return {
             "success": True,
@@ -119,4 +146,3 @@ class Step1AudioExtraction(BaseStep):
             "metadata_file": metadata_file,
             "metadata": metadata
         }
-

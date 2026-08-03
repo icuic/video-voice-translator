@@ -23,6 +23,12 @@ project_root = os.path.dirname(backend_dir)
 sys.path.insert(0, project_root)
 sys.path.insert(0, backend_dir)
 
+hf_cache_dir = os.path.join(project_root, "index-tts", ".cache", "hf")
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+os.environ.setdefault("HF_HOME", hf_cache_dir)
+os.environ.setdefault("HF_HUB_CACHE", hf_cache_dir)
+os.environ.setdefault("TRANSFORMERS_CACHE", hf_cache_dir)
+
 from app.api import media, translation, segments, websocket
 
 # 中间件：增加请求体大小限制以支持大文件上传
@@ -80,4 +86,3 @@ async def health_check():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-

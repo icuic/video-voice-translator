@@ -7,6 +7,7 @@ import logging
 import gc
 import torch
 from typing import Dict, Any, Optional
+from .device_utils import get_torch_runtime_info
 
 
 class GPUMonitor:
@@ -26,17 +27,21 @@ class GPUMonitor:
         self.enabled = gpu_config.get('enable', True)
         self.log_interval = gpu_config.get('log_interval', 10)
         self.safety_margin_gb = gpu_config.get('safety_margin_gb', 5.0)
+        self.runtime_info = get_torch_runtime_info()
         
-        # 检查CUDA是否可用
-        self.cuda_available = torch.cuda.is_available()
+        # ROCm 下 PyTorch 仍通过 torch.cuda 暴露 GPU 接口，因此这里保留兼容属性。
+        self.cuda_available = self.runtime_info["gpu_available"]
         if not self.cuda_available:
-            self.logger.warning("CUDA不可用，GPU监控功能将被禁用")
+            self.logger.warning("未检测到可用GPU，GPU监控功能将被禁用")
             self.enabled = False
         
         # IndexTTS2模型预估显存需求（GB）
         self.model_memory_per_worker_gb = 8.0  # 每个worker预估需要8GB显存
         
-        self.logger.info(f"GPU监控器初始化完成 - 启用: {self.enabled}, CUDA可用: {self.cuda_available}")
+        self.logger.info(
+            f"GPU监控器初始化完成 - 启用: {self.enabled}, "
+            f"后端: {self.runtime_info['accelerator_label']}, GPU可用: {self.cuda_available}"
+        )
     
     def get_gpu_memory_info(self) -> Dict[str, float]:
         """
@@ -131,7 +136,7 @@ class GPUMonitor:
             return
         
         try:
-            # 清理PyTorch CUDA缓存
+            # ROCm 下也通过 torch.cuda.empty_cache() 清理缓存
             torch.cuda.empty_cache()
             
             # 强制垃圾回收
@@ -173,12 +178,19 @@ class GPUMonitor:
             设备信息字典
         """
         if not self.enabled or not self.cuda_available:
-            return {'device_name': 'CPU', 'cuda_available': False}
+            return {
+                'device_name': 'CPU',
+                'accelerator_label': 'CPU',
+                'accelerator_kind': 'cpu',
+                'cuda_available': False
+            }
         
         try:
             device_props = torch.cuda.get_device_properties(0)
             return {
                 'device_name': device_props.name,
+                'accelerator_label': self.runtime_info['accelerator_label'],
+                'accelerator_kind': self.runtime_info['accelerator_kind'],
                 'cuda_available': True,
                 'compute_capability': f"{device_props.major}.{device_props.minor}",
                 'total_memory_gb': device_props.total_memory / (1024**3),
@@ -186,4 +198,9 @@ class GPUMonitor:
             }
         except Exception as e:
             self.logger.error(f"获取GPU设备信息失败: {e}")
-            return {'device_name': 'Unknown', 'cuda_available': False}
+            return {
+                'device_name': 'Unknown',
+                'accelerator_label': self.runtime_info['accelerator_label'],
+                'accelerator_kind': self.runtime_info['accelerator_kind'],
+                'cuda_available': False
+            }

@@ -67,7 +67,7 @@ Video Voice Translator 是一个基于人工智能技术的多语言音视频翻
 - Web UI 界面：基于 Gradio 的可视化操作界面
 - 命令行工具：支持批处理和自动化脚本
 - 模型预加载：启动时预加载模型，提升处理速度
-- GPU 加速支持：关键模块支持 CUDA 加速
+- GPU 加速支持：关键模块支持 NVIDIA CUDA / AMD ROCm（部分组件会按环境自动降级）
 - 进度跟踪：实时显示处理进度和状态
 - 日志记录：完整的处理日志和错误追踪
 
@@ -127,7 +127,9 @@ video_voice_translator/
 ├── media_translation_webui.py    # Web UI 入口
 ├── media_translation_cli.py      # 命令行入口
 ├── install_all.sh                # 一键安装脚本（推荐）
-├── run_webui.sh                  # Web UI 启动脚本
+├── service.sh                    # 稳定的前后端服务管理脚本
+├── start.sh                      # 启动前后端（委托给 service.sh）
+├── run_webui.sh                  # Gradio Web UI 启动脚本
 ├── run_cli.sh                    # CLI 翻译启动脚本
 ├── scripts/                      # 脚本目录
 │   ├── install/                  # 安装脚本
@@ -146,7 +148,12 @@ video_voice_translator/
 
 - **系统内存（RAM）**：至少 8GB（推荐 16GB 或更多）
 - **磁盘空间**：至少 30GB（用于模型文件约 5.5GB、虚拟环境约 9GB、依赖和缓存等）
-- **GPU**：NVIDIA GPU，显存至少 8GB（推荐 RTX 3060/4060 或更高型号，CPU 模式运行会很慢）
+- **GPU**：推荐 8GB 及以上显存的独立 GPU；本分支优先面向 AMD Radeon/ROCm 适配，NVIDIA CUDA 仍可运行，CPU 模式会明显变慢
+
+**AMD/ROCm 提示**：
+- 默认 ASR 后端已切换为原生 `whisper`，更适合 AMD/ROCm 环境
+- `IndexTTS2` 的 CUDA kernel 在本分支默认关闭，避免在 ROCm 环境中误触发 CUDA 专用优化
+- 如果你在 NVIDIA 环境运行，并希望追求更高 ASR 速度，可在 `config.yaml` 中把 `whisper.backend` 改回 `faster-whisper`
 
 详细系统要求和推荐配置请参考：[安装指南](docs/INSTALL.md)
 
@@ -166,17 +173,30 @@ video_voice_translator/
 
 详细安装步骤请参考：[安装指南](docs/INSTALL.md)
 
-### 环境变量配置
+### 翻译 LLM 配置
 
-本项目需要使用阿里云 DashScope（Qwen）API 进行文本翻译，需要配置 API 密钥：
+推荐把翻译模型配置写到项目根目录的 `.env` 中。该文件已被 `.gitignore` 忽略，不会提交到仓库：
 
-```bash
-# Linux/macOS - 添加到 ~/.bashrc 或 ~/.zshrc
-echo 'export DASHSCOPE_API_KEY="your-api-key-here"' >> ~/.bashrc
-source ~/.bashrc
+```dotenv
+LLM_BASE_URL=https://developer.amd.com.cn/radeon/api/v1
+LLM_MODEL=DeepSeek-V4-Flash
+LLM_API_KEY=your-api-key-here
+LLM_TIMEOUT=300.0
 ```
 
-**获取 API 密钥**：访问 [阿里云 DashScope 控制台](https://dashscope.console.aliyun.com/)
+如果你不想把 key 直接写进 `.env`，也可以这样配置：
+
+```dotenv
+LLM_BASE_URL=https://developer.amd.com.cn/radeon/api/v1
+LLM_MODEL=DeepSeek-V4-Flash
+LLM_API_KEY_ENV=RADEON_API_KEY
+```
+
+然后在系统环境变量中设置：
+
+```bash
+export RADEON_API_KEY="your-api-key-here"
+```
 
 详细配置说明请参考：[安装指南](docs/INSTALL.md)
 
@@ -193,12 +213,41 @@ source ~/.bashrc
 **方式二：前后端分离模式**：
 
 ```bash
-./start.sh
+./service.sh up
 ```
 
 - 前端界面：`http://localhost:5173`
 - 后端 API：`http://localhost:8000`
 - API 文档：`http://localhost:8000/docs`
+
+常用管理命令：
+
+```bash
+./service.sh status
+./service.sh restart
+./service.sh logs
+./service.sh down
+```
+
+如果希望服务在 SSH 断线后仍持续运行，可使用 supervisor：
+
+```bash
+./supervisor.sh up
+./supervisor.sh status
+./supervisor.sh restart
+./supervisor.sh down
+```
+
+如果你通过 SSH 端口转发访问云服务器：
+
+```bash
+ssh -i <私钥> -p <SSH端口> <用户>@<服务器IP> -L 5173:127.0.0.1:5173 -L 8000:127.0.0.1:8000 -N
+```
+
+然后在本机浏览器中访问：
+
+- 前端：`http://127.0.0.1:5173`
+- API 文档：`http://127.0.0.1:8000/docs`
 
 **方式三：命令行方式**：
 
@@ -217,6 +266,7 @@ source ~/.bashrc
 ### 用户文档
 - **[安装指南](docs/INSTALL.md)** - 详细的安装和配置说明
 - **[使用指南](docs/USAGE.md)** - 完整的使用方法和示例
+- **[演示指南](docs/DEMO.md)** - 比赛演示时的启动、访问和展示建议
 - **[流程文档](docs/WORKFLOW.md)** - 完整的9步骤流程说明和设计要点
 
 ### 开发者文档
