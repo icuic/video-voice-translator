@@ -30,6 +30,12 @@
 ./service.sh up
 ```
 
+如果是云服务器，且希望 SSH 断线后服务继续运行，推荐：
+
+```bash
+./supervisor.sh up
+```
+
 - 前端界面：`http://localhost:5173`
 - 后端 API：`http://localhost:8000`
 - API 文档：`http://localhost:8000/docs`

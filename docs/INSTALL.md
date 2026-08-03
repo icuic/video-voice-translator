@@ -31,17 +31,20 @@
 ```
 
 **一键安装脚本会自动处理：**
-- ✅ 安装系统依赖（FFmpeg、lsof、Node.js）
-- ✅ 安装 IndexTTS2
+- ✅ 安装系统依赖（FFmpeg、lsof、Node.js、Python 3.11）
+- ✅ 安装 IndexTTS2（含 checkpoints 下载）
+- ✅ 在 AMD/ROCm 环境自动安装/修复 ROCm 版 PyTorch
+- ✅ 预热 IndexTTS2 运行时需要的 HuggingFace 缓存（可选跳过）
 - ✅ 安装主项目依赖
 - ✅ 安装前端依赖
 - ✅ 验证安装（包括依赖、IndexTTS2、模型文件）
-- ✅ 配置环境变量（DASHSCOPE_API_KEY）
+- ✅ 生成项目根目录 `.env`（从 `.env.example` 复制，用于翻译 LLM 配置）
 
 **注意**：
 - 模型文件较大（约 5.5GB），下载可能需要一些时间
 - 脚本会优先使用 ModelScope（国内用户），如果失败会尝试 HuggingFace
-- 安装完成后会提示配置 DASHSCOPE_API_KEY（翻译功能需要）
+- `.env` 中的 `LLM_API_KEY` 需要你手动填写，填写后重启服务即可启用翻译功能
+- 如需跳过 HuggingFace 预热，可设置 `SKIP_HF_PREWARM=1`
 
 ---
 
@@ -214,6 +217,11 @@ export RADEON_API_KEY='your-api-key-here'
   ./service.sh up
   ```
   前端：`http://localhost:5173`，后端 API：`http://localhost:8000`
+
+- **使用 supervisor（推荐云上，SSH断线不影响）**：
+  ```bash
+  ./supervisor.sh up
+  ```
 
 - **使用命令行方式**：
   ```bash

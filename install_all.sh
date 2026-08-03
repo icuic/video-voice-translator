@@ -12,11 +12,13 @@ echo "=========================================="
 echo "🚀 一键安装脚本"
 echo "=========================================="
 echo "将自动完成所有安装步骤，包括："
-echo "  - 系统依赖（FFmpeg、lsof、Node.js）"
+echo "  - 系统依赖（FFmpeg、lsof、Node.js、Python 3.11）"
 echo "  - IndexTTS2 安装（包含模型文件下载，约 5.5GB）"
+echo "  - AMD/ROCm PyTorch 安装与校验"
+echo "  - IndexTTS2 运行时 HuggingFace 缓存预热"
 echo "  - 主项目依赖安装"
 echo "  - 前端依赖安装"
-echo "  - 环境变量配置"
+echo "  - 翻译 LLM 配置（.env）"
 echo "=========================================="
 echo ""
 
@@ -29,8 +31,18 @@ fi
 
 # 步骤1: 安装系统依赖
 echo "=========================================="
-echo "📦 步骤 1/7: 安装系统依赖"
+echo "📦 步骤 1/8: 安装系统依赖"
 echo "=========================================="
+
+# 检查并安装 Python 3.11（推荐用于 IndexTTS2 环境）
+if ! command -v python3.11 &> /dev/null; then
+    echo "安装 Python 3.11..."
+    $SUDO_CMD apt-get update
+    $SUDO_CMD apt-get install -y python3.11 python3.11-venv python3.11-dev
+    echo "✅ Python 3.11 安装完成: $(python3.11 --version)"
+else
+    echo "✅ Python 3.11 已安装: $(python3.11 --version)"
+fi
 
 # 检查 FFmpeg
 if ! command -v ffmpeg &> /dev/null; then
@@ -64,7 +76,7 @@ fi
 # 步骤2: 安装 IndexTTS2
 echo ""
 echo "=========================================="
-echo "📦 步骤 2/7: 安装 IndexTTS2"
+echo "📦 步骤 2/8: 安装 IndexTTS2"
 echo "=========================================="
 
 if [ ! -f "${PROJECT_ROOT}/scripts/install/install_index_tts.sh" ]; then
@@ -72,34 +84,60 @@ if [ ! -f "${PROJECT_ROOT}/scripts/install/install_index_tts.sh" ]; then
     exit 1
 fi
 
+export UV_PYTHON="${UV_PYTHON:-python3.11}"
+
 bash "${PROJECT_ROOT}/scripts/install/install_index_tts.sh"
 
-# 步骤3: 检查 PyTorch
+# 步骤3: 安装/修复 ROCm PyTorch（AMD）
 echo ""
 echo "=========================================="
-echo "🔍 步骤 3/7: 检查 PyTorch"
+echo "🧩 步骤 3/8: 安装/修复 ROCm PyTorch"
 echo "=========================================="
 
-if [ -f "${PROJECT_ROOT}/index-tts/.venv/bin/activate" ]; then
-    cd "${PROJECT_ROOT}/index-tts"
-    source .venv/bin/activate
-    
-    if python -c "import torch; kind = 'AMD ROCm' if getattr(torch.version, 'hip', None) else ('NVIDIA CUDA' if getattr(torch.version, 'cuda', None) else 'CPU'); print(f'✅ PyTorch 已安装: {torch.__version__}'); print(f'   GPU 可用: {torch.cuda.is_available()}'); print(f'   运行后端: {kind}')" 2>/dev/null; then
-        python -c "import torch; kind = 'AMD ROCm' if getattr(torch.version, 'hip', None) else ('NVIDIA CUDA' if getattr(torch.version, 'cuda', None) else 'CPU'); print(f'✅ PyTorch 已安装: {torch.__version__}'); print(f'   GPU 可用: {torch.cuda.is_available()}'); print(f'   运行后端: {kind}')"
-    else
-        echo "⚠️  PyTorch 未安装或无法导入"
-        echo "   这可能是正常的，IndexTTS2 依赖安装时会自动安装 PyTorch"
-    fi
-    
-    cd "${PROJECT_ROOT}"
-else
-    echo "⚠️  虚拟环境不存在，跳过 PyTorch 检查"
+HAS_ROCM=false
+if [ "${FORCE_ROCM:-}" = "1" ]; then
+    HAS_ROCM=true
+elif [ -d "/opt/rocm" ]; then
+    HAS_ROCM=true
+elif command -v rocminfo >/dev/null 2>&1; then
+    HAS_ROCM=true
 fi
 
-# 步骤4: 安装主项目依赖
+if [ "${HAS_ROCM}" = "true" ]; then
+    if [ ! -f "${PROJECT_ROOT}/scripts/install/install_rocm_pytorch.sh" ]; then
+        echo "❌ 找不到 install_rocm_pytorch.sh 脚本"
+        exit 1
+    fi
+    bash "${PROJECT_ROOT}/scripts/install/install_rocm_pytorch.sh"
+else
+    echo "⚠️  未检测到 ROCm 环境，跳过 ROCm PyTorch 安装（如需强制安装，设置 FORCE_ROCM=1）"
+fi
+
+# 步骤4: 预热 IndexTTS2 运行时 HuggingFace 缓存
 echo ""
 echo "=========================================="
-echo "📦 步骤 4/7: 安装主项目依赖"
+echo "📥 步骤 4/8: 预热 IndexTTS2 运行时 HuggingFace 缓存"
+echo "=========================================="
+
+if [ "${SKIP_HF_PREWARM:-}" = "1" ]; then
+    echo "已跳过预热（SKIP_HF_PREWARM=1）"
+else
+    if [ -x "${PROJECT_ROOT}/index-tts/.venv/bin/python" ]; then
+        export HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
+        export HF_HOME="${PROJECT_ROOT}/index-tts/.cache/hf"
+        "${PROJECT_ROOT}/index-tts/.venv/bin/python" "${PROJECT_ROOT}/scripts/install/prewarm_indextts_hf_cache.py" || {
+            echo "⚠️  预热失败（可能是网络受限）。可后续再执行："
+            echo "   HF_ENDPOINT=https://hf-mirror.com ${PROJECT_ROOT}/index-tts/.venv/bin/python ${PROJECT_ROOT}/scripts/install/prewarm_indextts_hf_cache.py"
+        }
+    else
+        echo "⚠️  未找到 index-tts 虚拟环境，跳过预热"
+    fi
+fi
+
+# 步骤5: 安装主项目依赖
+echo ""
+echo "=========================================="
+echo "📦 步骤 5/8: 安装主项目依赖"
 echo "=========================================="
 
 if [ ! -f "${PROJECT_ROOT}/scripts/install/install_with_uv_china.sh" ]; then
@@ -109,10 +147,10 @@ fi
 
 bash "${PROJECT_ROOT}/scripts/install/install_with_uv_china.sh"
 
-# 步骤5: 安装前端依赖
+# 步骤6: 安装前端依赖
 echo ""
 echo "=========================================="
-echo "📦 步骤 5/7: 安装前端依赖"
+echo "📦 步骤 6/8: 安装前端依赖"
 echo "=========================================="
 
 if ! command -v npm &> /dev/null; then
@@ -162,49 +200,23 @@ else
     echo "⚠️  模型文件未找到，音色克隆功能将无法使用"
 fi
 
-# 步骤6: 配置环境变量
+# 步骤7: 配置翻译 LLM（.env）
 echo ""
 echo "=========================================="
-echo "⚙️  步骤 6/7: 配置环境变量"
+echo "⚙️  步骤 7/8: 配置翻译 LLM（.env）"
 echo "=========================================="
 
-# 注意：HF_ENDPOINT 已在 install_index_tts.sh 中配置（模型下载时）
-echo "✅ HF_ENDPOINT 已在 IndexTTS2 安装时配置"
-
-# 配置 DASHSCOPE_API_KEY
-if ! grep -q "DASHSCOPE_API_KEY" ~/.bashrc 2>/dev/null; then
-    echo ""
-    echo "⚠️  DASHSCOPE_API_KEY 未配置"
-    echo "   翻译功能需要此配置"
-    echo ""
-    
-    # 检查是否在交互式终端中
-    if [ -t 0 ]; then
-        echo "请输入您的 DASHSCOPE_API_KEY（留空跳过，稍后手动配置）："
-        read -r DASHSCOPE_API_KEY
-        
-        if [ -n "$DASHSCOPE_API_KEY" ]; then
-            echo "export DASHSCOPE_API_KEY='${DASHSCOPE_API_KEY}'" >> ~/.bashrc
-            echo "✅ DASHSCOPE_API_KEY 已配置到 ~/.bashrc"
-            echo "   请运行 'source ~/.bashrc' 或重新打开终端使配置生效"
-        else
-            echo "⚠️  已跳过配置，请稍后手动在 ~/.bashrc 中添加："
-            echo "   export DASHSCOPE_API_KEY='your-api-key-here'"
-        fi
+ENV_FILE="${PROJECT_ROOT}/.env"
+if [ ! -f "${ENV_FILE}" ]; then
+    if [ -f "${PROJECT_ROOT}/.env.example" ]; then
+        cp "${PROJECT_ROOT}/.env.example" "${ENV_FILE}"
+        echo "✅ 已生成 ${ENV_FILE}（请填写 LLM_API_KEY 后重启服务）"
     else
-        # 非交互式环境，只显示提示
-        echo "   请在 ~/.bashrc 中添加："
-        echo "   export DASHSCOPE_API_KEY='your-api-key-here'"
-        echo ""
-        echo "   或者设置环境变量后重新运行此脚本："
-        echo "   export DASHSCOPE_API_KEY='your-api-key-here'"
-        echo "   ./scripts/install/install_all.sh"
+        echo "⚠️  未找到 .env.example，请手动创建 ${ENV_FILE}"
     fi
-else
-    echo "✅ DASHSCOPE_API_KEY 已配置"
 fi
 
-# 步骤7: 安装完成提示
+# 步骤8: 安装完成提示
 echo ""
 echo "=========================================="
 echo "🎉 安装完成！"
@@ -214,12 +226,14 @@ echo "下一步可以："
 echo "1. 启动 Gradio Web UI（推荐新手）: ./run_webui.sh"
 echo "   访问: http://localhost:7861"
 echo ""
-echo "2. 启动前后端分离模式（需要 Node.js）: ./start.sh"
+echo "2. 启动前后端分离模式: ./service.sh up"
 echo "   前端: http://localhost:5173"
 echo "   后端 API: http://localhost:8000"
 echo "   API 文档: http://localhost:8000/docs"
 echo ""
-echo "3. 使用命令行: ./run_cli.sh input.mp4"
+echo "3. 使用 supervisor（推荐云上，SSH断线不影响）: ./supervisor.sh up"
+echo ""
+echo "4. 使用命令行: ./run_cli.sh input.mp4"
 echo ""
 echo "如果遇到问题，请查看："
 echo "- 安装文档: docs/INSTALL.md"

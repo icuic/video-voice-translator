@@ -167,6 +167,12 @@ video_voice_translator/
 ./install_all.sh
 ```
 
+在 AMD/ROCm 云机上，该脚本还会尝试：
+- 安装 Python 3.11
+- 自动安装/修复 ROCm 版 PyTorch
+- 预热 IndexTTS2 运行时需要的 HuggingFace 缓存
+- 生成项目根目录 `.env`（从 `.env.example` 复制）
+
 **手动安装**
 
 如果您希望手动控制安装过程，请参考：[安装指南](docs/INSTALL.md)

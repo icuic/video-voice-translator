@@ -20,18 +20,29 @@ else
     echo "✅ uv 已安装: $(uv --version 2>/dev/null | head -1 || echo '已安装')"
 fi
 
-# 步骤1: 克隆 IndexTTS2 仓库（如果不存在或为空）
+# 步骤1: 获取 IndexTTS2 仓库（如果不存在或为空）
 if [ ! -d "${PROJECT_ROOT}/index-tts" ] || [ ! -f "${PROJECT_ROOT}/index-tts/pyproject.toml" ]; then
     if [ -d "${PROJECT_ROOT}/index-tts" ] && [ ! -f "${PROJECT_ROOT}/index-tts/pyproject.toml" ]; then
         echo ""
-        echo "⚠️  检测到 index-tts 目录存在但为空或不完整，正在重新克隆..."
+        echo "⚠️  检测到 index-tts 目录存在但为空或不完整，正在重新获取..."
         rm -rf "${PROJECT_ROOT}/index-tts"
     else
         echo ""
-        echo "📥 检测到 index-tts 目录不存在，正在克隆仓库..."
+        echo "📥 检测到 index-tts 目录不存在，正在获取仓库..."
     fi
-    git clone https://github.com/index-tts/index-tts.git "${PROJECT_ROOT}/index-tts"
-    echo "✅ IndexTTS2 仓库克隆完成"
+    if git clone https://github.com/index-tts/index-tts.git "${PROJECT_ROOT}/index-tts"; then
+        echo "✅ IndexTTS2 仓库克隆完成"
+    else
+        echo "⚠️  git clone 失败，尝试使用 GitHub tarball 回退下载..."
+        TMP_TARBALL="$(mktemp /tmp/index-tts.XXXXXX.tar.gz)"
+        curl -kL https://codeload.github.com/index-tts/index-tts/tar.gz/refs/heads/main -o "${TMP_TARBALL}"
+        mkdir -p "${PROJECT_ROOT}/index-tts"
+        tar -xzf "${TMP_TARBALL}" -C "${PROJECT_ROOT}"
+        rm -rf "${PROJECT_ROOT}/index-tts"
+        mv "${PROJECT_ROOT}/index-tts-main" "${PROJECT_ROOT}/index-tts"
+        rm -f "${TMP_TARBALL}"
+        echo "✅ IndexTTS2 tarball 下载完成"
+    fi
 else
     echo "✅ IndexTTS2 仓库已存在"
 fi
