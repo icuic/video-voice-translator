@@ -79,11 +79,6 @@ export const FileUpload: React.FC<FileUploadProps> = ({
     }
   };
 
-  // 从URL参数获取最大文件大小限制（单位：MB）
-  const urlParams = new URLSearchParams(window.location.search);
-  const maxSizeMB = urlParams.get('ms');
-  const displayMaxSize = maxSizeMB || '100';
-
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(true);
@@ -291,7 +286,6 @@ export const FileUpload: React.FC<FileUploadProps> = ({
               </div>
               <h3 className="text-xl font-semibold text-white mb-2">Upload Video</h3>
               <p className="text-slate-400 mb-1">Drag & drop or click to select a video file</p>
-              <p className="text-sm text-slate-500">Max {displayMaxSize}MB supported in browser</p>
             </>
           ) : (
             <div className="space-y-4">
