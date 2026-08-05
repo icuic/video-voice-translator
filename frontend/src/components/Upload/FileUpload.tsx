@@ -11,10 +11,22 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onUploadComplete }) => {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [sourceLanguage, setSourceLanguage] = useState('');
-  const [targetLanguage, setTargetLanguage] = useState('');
+  const [sourceLanguage, setSourceLanguage] = useState('en');
+  const [targetLanguage, setTargetLanguage] = useState('zh');
   const [isStarting, setIsStarting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleSourceLanguageChange = (value: string) => {
+    setSourceLanguage(value);
+    if (value === 'en') setTargetLanguage('zh');
+    if (value === 'zh') setTargetLanguage('en');
+  };
+
+  const handleTargetLanguageChange = (value: string) => {
+    setTargetLanguage(value);
+    if (value === 'en') setSourceLanguage('zh');
+    if (value === 'zh') setSourceLanguage('en');
+  };
 
   // 从URL参数获取最大文件大小限制（单位：MB）
   const urlParams = new URLSearchParams(window.location.search);
@@ -262,7 +274,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onUploadComplete }) => {
                   <label className="block text-sm text-slate-400 mb-1">源语言</label>
                   <select
                     value={sourceLanguage}
-                    onChange={(e) => setSourceLanguage(e.target.value)}
+                    onChange={(e) => handleSourceLanguageChange(e.target.value)}
                     onClick={(e) => e.stopPropagation()}
                     className="px-4 py-2 bg-slate-700 text-white rounded-lg border border-slate-600 focus:border-indigo-500 focus:outline-none"
                   >
@@ -275,7 +287,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onUploadComplete }) => {
                   <label className="block text-sm text-slate-400 mb-1">目标语言</label>
                   <select
                     value={targetLanguage}
-                    onChange={(e) => setTargetLanguage(e.target.value)}
+                    onChange={(e) => handleTargetLanguageChange(e.target.value)}
                     onClick={(e) => e.stopPropagation()}
                     className="px-4 py-2 bg-slate-700 text-white rounded-lg border border-slate-600 focus:border-indigo-500 focus:outline-none"
                   >
@@ -323,4 +335,3 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onUploadComplete }) => {
     </div>
   );
 };
-
