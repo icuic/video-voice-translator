@@ -9,7 +9,7 @@ import { segmentService } from './services/segments';
 import { translationService } from './services/translation';
 import { mediaService } from './services/media';
 import { Segment } from './types/segment';
-import { TranslationTask } from './types/media';
+import { TranslationTask, TranslationHistoryItem } from './types/media';
 
 function App() {
   const { segments, setSegments, updateSegment, deleteSegment } = useSegmentStore();
@@ -36,54 +36,18 @@ function App() {
   const regenerateCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null); // 存储重新生成检查的定时器引用
   const hasShownRegenerateAlertRef = useRef<boolean>(false); // 标记是否已经显示过重新生成完成的提示
 
-  // #region debug-point D:global-error-handlers
-  useEffect(() => {
-    const report = (payload: any) => {
-      try {
-        fetch('http://127.0.0.1:7778/event', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sessionId: 'voice-clone-page-close',
-            runId: 'pre-fix',
-            hypothesisId: 'D',
-            location: 'frontend/src/App.tsx:global',
-            msg: '[DEBUG] frontend error captured',
-            data: payload,
-            ts: Date.now(),
-          }),
-        }).catch(() => {});
-      } catch (_) {}
-    };
-
-    const onError = (event: ErrorEvent) => {
-      report({
-        type: 'error',
-        message: event.message,
-        filename: event.filename,
-        lineno: event.lineno,
-        colno: event.colno,
-      });
-    };
-
-    const onUnhandledRejection = (event: PromiseRejectionEvent) => {
-      report({
-        type: 'unhandledrejection',
-        reason: String(event.reason),
-      });
-    };
-
-    window.addEventListener('error', onError);
-    window.addEventListener('unhandledrejection', onUnhandledRejection);
-
-    report({ type: 'mounted', href: window.location.href });
-
-    return () => {
-      window.removeEventListener('error', onError);
-      window.removeEventListener('unhandledrejection', onUnhandledRejection);
-    };
-  }, []);
-  // #endregion
+  const resetWorkspace = () => {
+    setShowEditor(false);
+    setShowProgress(false);
+    setTaskId(null);
+    setVideoSrc('');
+    setOriginalVideoUrl('');
+    setDubbedVideoUrl(null);
+    setVideoSource('original');
+    setSegments([]);
+    setTranslationTask(null);
+    setResynthesizedSegments(new Set());
+  };
 
   // 根据当前选择的视频源更新实际播放的 src
   useEffect(() => {
@@ -308,6 +272,54 @@ function App() {
     
     // 开始轮询任务状态
     pollTaskStatus(uploadedTaskId);
+  };
+
+  const handleOpenHistoryTask = async (task: TranslationHistoryItem) => {
+    try {
+      resetWorkspace();
+      setTaskId(task.task_id);
+
+      const status = await translationService.getStatus(task.task_id);
+      setTranslationTask(status);
+
+      const restoredFileId = status.file_id || task.file_id;
+      if (restoredFileId) {
+        setOriginalVideoUrl(mediaService.getMedia(restoredFileId));
+      }
+
+      if (status.status === 'completed') {
+        const result = await translationService.getResult(task.task_id);
+        if (result.video_path) {
+          setDubbedVideoUrl(`/api/media/result/${task.task_id}`);
+          setVideoSource('dubbed');
+        } else {
+          setVideoSource('original');
+        }
+      } else {
+        setVideoSource('original');
+      }
+
+      try {
+        const segs = await segmentService.getSegments(task.task_id);
+        setSegments(segs);
+      } catch (error) {
+        console.warn('加载历史任务分段失败:', error);
+        setSegments([]);
+      }
+
+      if (status.status === 'completed' || status.status === 'paused_step4' || status.status === 'paused_step5') {
+        setShowEditor(true);
+        setShowProgress(false);
+      } else {
+        setShowEditor(false);
+        setShowProgress(true);
+        pollTaskStatus(task.task_id);
+      }
+    } catch (error) {
+      console.error('打开历史任务失败:', error);
+      alert('打开历史任务失败，请稍后重试。');
+      resetWorkspace();
+    }
   };
 
   // 处理视频时长更新
@@ -654,7 +666,12 @@ function App() {
 
       // 如果还没有上传文件，显示上传界面
       if (!showEditor && !showProgress) {
-        return <FileUpload onUploadComplete={handleUploadComplete} />;
+        return (
+          <FileUpload
+            onUploadComplete={handleUploadComplete}
+            onOpenHistoryTask={handleOpenHistoryTask}
+          />
+        );
       }
       
       // 如果正在处理中或等待中，显示进度界面
@@ -726,16 +743,7 @@ function App() {
               </button>
             )}
             <button
-              onClick={() => {
-                setShowEditor(false);
-                setTaskId(null);
-                setVideoSrc('');
-                setOriginalVideoUrl('');
-                setDubbedVideoUrl(null);
-                setVideoSource('original');
-                setSegments([]);
-                setResynthesizedSegments(new Set());
-              }}
+              onClick={resetWorkspace}
               className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
             >
               上传新文件

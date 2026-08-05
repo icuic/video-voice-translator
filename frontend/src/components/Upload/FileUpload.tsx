@@ -1,12 +1,18 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { mediaService } from '../../services/media';
 import { translationService } from '../../services/translation';
+import { TranslationHistoryItem } from '../../types/media';
+import { HistoryTaskList } from './HistoryTaskList';
 
 interface FileUploadProps {
   onUploadComplete: (fileId: string, taskId: string) => void;
+  onOpenHistoryTask: (task: TranslationHistoryItem) => void;
 }
 
-export const FileUpload: React.FC<FileUploadProps> = ({ onUploadComplete }) => {
+export const FileUpload: React.FC<FileUploadProps> = ({
+  onUploadComplete,
+  onOpenHistoryTask,
+}) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -14,7 +20,25 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onUploadComplete }) => {
   const [sourceLanguage, setSourceLanguage] = useState('en');
   const [targetLanguage, setTargetLanguage] = useState('zh');
   const [isStarting, setIsStarting] = useState(false);
+  const [historyTasks, setHistoryTasks] = useState<TranslationHistoryItem[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(true);
+  const [deletingTaskIds, setDeletingTaskIds] = useState<Record<string, boolean>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  React.useEffect(() => {
+    const loadHistory = async () => {
+      try {
+        const tasks = await translationService.getHistory(12, 'completed');
+        setHistoryTasks(tasks);
+      } catch (error) {
+        console.error('加载历史任务失败:', error);
+      } finally {
+        setIsLoadingHistory(false);
+      }
+    };
+
+    loadHistory();
+  }, []);
 
   const handleSourceLanguageChange = (value: string) => {
     setSourceLanguage(value);
@@ -26,6 +50,32 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onUploadComplete }) => {
     setTargetLanguage(value);
     if (value === 'en') setSourceLanguage('zh');
     if (value === 'zh') setSourceLanguage('en');
+  };
+
+  const handleDeleteHistoryTask = async (task: TranslationHistoryItem) => {
+    const displayName = task.original_filename || task.file_name || task.task_id;
+    const confirmed = window.confirm(
+      `确认删除历史任务“${displayName}”吗？\n\n这会删除该任务的历史记录和输出结果目录。`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingTaskIds((prev) => ({ ...prev, [task.task_id]: true }));
+    try {
+      await translationService.deleteHistoryTask(task.task_id);
+      setHistoryTasks((prev) => prev.filter((item) => item.task_id !== task.task_id));
+    } catch (error) {
+      console.error('删除历史任务失败:', error);
+      alert('删除历史任务失败，请稍后重试或查看后端日志。');
+    } finally {
+      setDeletingTaskIds((prev) => {
+        const next = { ...prev };
+        delete next[task.task_id];
+        return next;
+      });
+    }
   };
 
   // 从URL参数获取最大文件大小限制（单位：MB）
@@ -331,6 +381,14 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onUploadComplete }) => {
             </div>
           )}
         </div>
+
+        <HistoryTaskList
+          tasks={historyTasks}
+          isLoading={isLoadingHistory}
+          onOpenTask={onOpenHistoryTask}
+          onDeleteTask={handleDeleteHistoryTask}
+          deletingTaskIds={deletingTaskIds}
+        />
       </div>
     </div>
   );

@@ -108,3 +108,7 @@ frontend/.vite/
 # React/Vite构建产物
 *.tsbuildinfo
 .vite
+
+# Cloudflare Tunnel / binaries
+.cloudflared/
+bin/cloudflared

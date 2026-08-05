@@ -7,6 +7,7 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',  // 监听所有网络接口，允许外部访问
     port: 5173,
+    allowedHosts: ['amd.vdub.app'],
     proxy: {
       '/api': {
         target: 'http://localhost:8000',
@@ -28,5 +29,4 @@ export default defineConfig({
     },
   },
 })
-
 

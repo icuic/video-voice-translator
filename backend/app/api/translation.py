@@ -3,8 +3,9 @@
 """
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import os
 import sys
 import uuid
@@ -12,6 +13,8 @@ import asyncio
 import logging
 import traceback
 import threading
+import json
+import shutil
 from pathlib import Path
 
 # 配置日志
@@ -42,6 +45,220 @@ class TranslationResponse(BaseModel):
     message: str
 
 
+TASK_STATES_DIR = Path("data/task_states")
+OUTPUTS_DIR = Path("data/outputs")
+
+
+def _load_persisted_task_state(task_id: str) -> Optional[Dict[str, Any]]:
+    state_file = TASK_STATES_DIR / f"{task_id}.json"
+    if not state_file.exists():
+        return None
+
+    try:
+        with open(state_file, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.warning(f"读取任务状态文件失败: task_id={task_id}, error={e}")
+        return None
+
+
+def _persist_task_state(task: Dict[str, Any]) -> None:
+    task_id = task.get("task_id")
+    if not task_id:
+        return
+
+    TASK_STATES_DIR.mkdir(parents=True, exist_ok=True)
+    state_file = TASK_STATES_DIR / f"{task_id}.json"
+    tmp_file = TASK_STATES_DIR / f"{task_id}.json.tmp"
+    with open(tmp_file, "w", encoding="utf-8") as f:
+        json.dump(task, f, ensure_ascii=False, indent=2)
+    tmp_file.replace(state_file)
+
+
+def _resolve_final_video_path(task: Dict[str, Any]) -> Optional[str]:
+    final_video_path = task.get("final_video_path")
+    if final_video_path and Path(final_video_path).exists():
+        return final_video_path
+
+    task_dir = task.get("task_dir")
+    if task_dir:
+        task_dir_path = Path(task_dir)
+        if task_dir_path.exists():
+            video_files = sorted(task_dir_path.glob("09_translated_*.mp4"))
+            if video_files:
+                return str(video_files[0])
+
+    return None
+
+
+def _load_task_params(task_dir: Optional[str]) -> Dict[str, Any]:
+    if not task_dir:
+        return {}
+
+    task_params_path = Path(task_dir) / "00_task_params.json"
+    if not task_params_path.exists():
+        return {}
+
+    try:
+        with open(task_params_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.warning(f"读取任务参数失败: task_dir={task_dir}, error={e}")
+        return {}
+
+
+def _resolve_original_input_path(task: Dict[str, Any]) -> Optional[str]:
+    task_dir = task.get("task_dir")
+    if task_dir:
+        task_dir_path = Path(task_dir)
+        if task_dir_path.exists():
+            original_candidates = sorted(task_dir_path.glob("00_original_input.*"))
+            if original_candidates:
+                return str(original_candidates[0])
+
+    file_path = task.get("file_path")
+    if file_path and Path(file_path).exists():
+        return file_path
+
+    return None
+
+
+def _resolve_media_type(task: Dict[str, Any]) -> str:
+    file_id = task.get("file_id")
+    if file_id:
+        try:
+            from app.api import media as media_api
+
+            upload_metadata = media_api.load_upload_metadata(file_id)
+            if upload_metadata.get("type") in {"video", "audio"}:
+                return upload_metadata["type"]
+        except Exception:
+            pass
+
+    candidate_path = _resolve_original_input_path(task) or _resolve_final_video_path(task) or task.get("file_path")
+    if candidate_path:
+        ext = Path(candidate_path).suffix.lower()
+        if ext in {".mp4", ".avi", ".mov", ".mkv", ".wmv", ".flv"}:
+            return "video"
+        if ext in {".wav", ".mp3", ".m4a", ".flac", ".aac", ".ogg"}:
+            return "audio"
+
+    return "unknown"
+
+
+def _resolve_original_filename(task: Dict[str, Any]) -> str:
+    original_filename = task.get("original_filename")
+    if original_filename:
+        return original_filename
+
+    file_id = task.get("file_id")
+    if file_id:
+        try:
+            from app.api import media as media_api
+
+            upload_metadata = media_api.load_upload_metadata(file_id)
+            metadata_name = upload_metadata.get("original_filename")
+            if metadata_name:
+                return metadata_name
+        except Exception:
+            pass
+
+    task_params = _load_task_params(task.get("task_dir"))
+    task_params_input_path = task_params.get("input_path")
+    if task_params_input_path:
+        return Path(task_params_input_path).name
+
+    file_path = task.get("file_path")
+    if file_path:
+        return Path(file_path).name
+
+    return ""
+
+
+def _resolve_thumbnail_url(task: Dict[str, Any]) -> Optional[str]:
+    if _resolve_media_type(task) != "video":
+        return None
+
+    file_id = task.get("file_id")
+    if file_id:
+        return f"/api/media/{file_id}/thumbnail"
+
+    task_id = task.get("task_id")
+    if task_id:
+        return f"/api/translation/{task_id}/thumbnail"
+
+    return None
+
+
+def _build_history_item(task: Dict[str, Any]) -> Dict[str, Any]:
+    file_path = task.get("file_path")
+    stored_file_name = Path(file_path).name if file_path else ""
+    file_name = _resolve_original_filename(task) or stored_file_name
+    task_dir = task.get("task_dir")
+    task_dir_name = Path(task_dir).name if task_dir else ""
+    final_video_path = _resolve_final_video_path(task)
+    media_type = _resolve_media_type(task)
+
+    return {
+        "task_id": task.get("task_id", ""),
+        "file_id": task.get("file_id", ""),
+        "file_path": file_path,
+        "file_name": file_name,
+        "original_filename": file_name,
+        "stored_file_name": stored_file_name,
+        "status": task.get("status", "unknown"),
+        "message": task.get("message", ""),
+        "step_name": task.get("step_name", ""),
+        "updated_at": task.get("updated_at"),
+        "source_language": task.get("source_language", ""),
+        "target_language": task.get("target_language", ""),
+        "media_type": media_type,
+        "task_dir": task_dir,
+        "task_dir_name": task_dir_name,
+        "final_video_path": final_video_path,
+        "thumbnail_url": _resolve_thumbnail_url(task),
+    }
+
+
+def _list_persisted_tasks(limit: int = 20, status_filter: Optional[str] = None) -> List[Dict[str, Any]]:
+    if not TASK_STATES_DIR.exists():
+        return []
+
+    task_files = sorted(
+        TASK_STATES_DIR.glob("*.json"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+
+    items: List[Dict[str, Any]] = []
+    for task_file in task_files:
+        try:
+            with open(task_file, "r", encoding="utf-8") as f:
+                task = json.load(f)
+            item = _build_history_item(task)
+            if status_filter and item.get("status") != status_filter:
+                continue
+            items.append(item)
+        except Exception as e:
+            logger.warning(f"读取历史任务失败: {task_file}, error={e}")
+
+        if len(items) >= limit:
+            break
+
+    return items
+
+
+def _list_in_memory_tasks(limit: int = 20, status_filter: Optional[str] = None) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    for task in tasks.values():
+        item = _build_history_item(task)
+        if status_filter and item.get("status") != status_filter:
+            continue
+        items.append(item)
+    items.sort(key=lambda x: x.get("updated_at") or 0, reverse=True)
+    return items[:limit]
+
+
 @router.post("/start", response_model=TranslationResponse)
 async def start_translation(
     request: TranslationRequest,
@@ -70,17 +287,28 @@ async def start_translation(
                 for f in upload_dir.iterdir():
                     print(f"[DEBUG] 找到文件: {f}", file=sys.stderr, flush=True)
             raise HTTPException(status_code=404, detail="上传的文件不存在")
+
+        upload_metadata: Dict[str, Any] = {}
+        try:
+            from app.api import media as media_api
+
+            upload_metadata = media_api.load_upload_metadata(request.file_id)
+        except Exception:
+            upload_metadata = {}
         
         # 初始化任务状态
         tasks[task_id] = {
             "task_id": task_id,
             "file_id": request.file_id,
             "file_path": file_path,
+            "original_filename": upload_metadata.get("original_filename", ""),
+            "media_type": upload_metadata.get("type", ""),
             "status": "pending",
             "current_step": 0,
             "progress": 0.0,
             "message": "任务已创建，等待处理...",
             "step_name": "",
+            "updated_at": int(__import__("time").time() * 1000),
             "current_segment": 0,
             "total_segments": 0,
             "source_language": request.source_language,
@@ -89,6 +317,7 @@ async def start_translation(
             "enable_segment_editing": request.enable_segment_editing,
             "enable_translation_editing": request.enable_translation_editing,
         }
+        _persist_task_state(tasks[task_id])
         # 使用多种方式确保日志输出
         import sys
         import os
@@ -126,6 +355,8 @@ async def start_translation(
         tasks[task_id]["progress"] = 1.0  # 初始进度1%
         tasks[task_id]["message"] = "正在启动翻译任务..."
         tasks[task_id]["step_name"] = "初始化中..."
+        tasks[task_id]["updated_at"] = int(__import__("time").time() * 1000)
+        _persist_task_state(tasks[task_id])
         logger.info(f"任务状态已立即更新为 processing: task_id={task_id}")
         print(f"[LOG] 任务状态已立即更新为 processing: task_id={task_id}, progress=1%", file=sys.stderr, flush=True)  # 使用 stderr 并立即刷新
         
@@ -170,6 +401,90 @@ async def start_translation(
         raise HTTPException(status_code=500, detail=f"启动翻译任务失败: {str(e)}")
 
 
+@router.get("/history")
+async def list_translation_history(limit: int = 20, status: Optional[str] = None):
+    """列出最近的历史任务"""
+    safe_limit = max(1, min(limit, 100))
+    status_filter = status or None
+    persisted = _list_persisted_tasks(safe_limit, status_filter=status_filter)
+    persisted_ids = {item.get("task_id") for item in persisted if item.get("task_id")}
+    in_memory = [item for item in _list_in_memory_tasks(safe_limit, status_filter=status_filter) if item.get("task_id") not in persisted_ids]
+    items = (in_memory + persisted)[:safe_limit]
+    return {"tasks": items}
+
+
+@router.delete("/history/{task_id}")
+async def delete_translation_history(task_id: str):
+    """删除某一项历史任务"""
+    state_file = TASK_STATES_DIR / f"{task_id}.json"
+    persisted_task = _load_persisted_task_state(task_id)
+    in_memory_task = tasks.get(task_id)
+    task_data = persisted_task or in_memory_task
+
+    if not task_data and not state_file.exists():
+        raise HTTPException(status_code=404, detail="历史任务不存在")
+
+    deleted_state_file = False
+    deleted_output_dir = False
+    deleted_output_dir_path = None
+
+    if task_id in tasks:
+        del tasks[task_id]
+
+    if state_file.exists():
+        state_file.unlink()
+        deleted_state_file = True
+
+    task_dir = task_data.get("task_dir") if task_data else None
+    if task_dir:
+        task_dir_path = Path(task_dir)
+        resolved_task_dir = task_dir_path.resolve()
+        resolved_outputs_dir = OUTPUTS_DIR.resolve()
+        try:
+            resolved_task_dir.relative_to(resolved_outputs_dir)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="任务输出目录不合法，已拒绝删除") from exc
+
+        if resolved_task_dir.exists():
+            shutil.rmtree(resolved_task_dir)
+            deleted_output_dir = True
+            deleted_output_dir_path = str(task_dir_path)
+
+    return {
+        "task_id": task_id,
+        "deleted_state_file": deleted_state_file,
+        "deleted_output_dir": deleted_output_dir,
+        "deleted_output_dir_path": deleted_output_dir_path,
+    }
+
+
+@router.get("/{task_id}/thumbnail")
+async def get_translation_thumbnail(task_id: str):
+    """获取历史任务的缩略图"""
+    task = tasks.get(task_id) or _load_persisted_task_state(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    thumbnail_source = _resolve_original_input_path(task) or _resolve_final_video_path(task)
+    if not thumbnail_source:
+        raise HTTPException(status_code=404, detail="当前任务没有可用的视频缩略图")
+
+    thumbnail_source_path = Path(thumbnail_source)
+    if thumbnail_source_path.suffix.lower() not in {".mp4", ".avi", ".mov", ".mkv", ".wmv", ".flv"}:
+        raise HTTPException(status_code=400, detail="当前任务不是视频任务，无法生成缩略图")
+
+    try:
+        from app.api import media as media_api
+
+        thumbnail_path = media_api.generate_video_thumbnail(thumbnail_source_path, f"task-{task_id}")
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="生成缩略图失败") from exc
+
+    return FileResponse(path=thumbnail_path, media_type="image/jpeg")
+
+
 def execute_translation_task(
     task_id: str,
     file_path: str,
@@ -185,12 +500,6 @@ def execute_translation_task(
     logger.info(f"开始执行翻译任务: task_id={task_id}, file_path={file_path}")
     import sys
     print(f"[LOG] 开始执行翻译任务: task_id={task_id}", file=sys.stderr, flush=True)  # 使用 stderr 并立即刷新
-
-    # #region debug-point A:task-entry
-    import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
-    try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"A","location":"backend/app/api/translation.py:execute_translation_task:entry","msg":"[DEBUG] task thread entered","data":{"task_id":task_id,"file_path":file_path}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
-    except Exception: pass
-    # #endregion
     
     try:
         # 立即更新任务状态
@@ -240,24 +549,18 @@ def execute_translation_task(
                 tasks[task_id]["progress"] = progress_pct
                 tasks[task_id]["current_segment"] = current_segment
                 tasks[task_id]["total_segments"] = total_segments
+                tasks[task_id]["updated_at"] = int(__import__("time").time() * 1000)
                 if message:
                     tasks[task_id]["message"] = message
                 elif current_segment > 0 and total_segments > 0:
                     tasks[task_id]["message"] = f"{step_name} ({current_segment}/{total_segments})"
                 else:
                     tasks[task_id]["message"] = step_name
+                _persist_task_state(tasks[task_id])
                 # 添加日志输出，确保能看到进度更新
                 import sys
                 print(f"[LOG] 进度更新: task_id={task_id}, step={step_index}, progress={progress_pct:.1f}%, message={tasks[task_id]['message']}", file=sys.stderr, flush=True)
                 logger.info(f"进度更新: task_id={task_id}, step={step_index}, progress={progress_pct:.1f}%, message={tasks[task_id]['message']}")
-
-                # #region debug-point D:progress-update
-                import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
-                try: 
-                    (step_index == 1) and urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"D","location":"backend/app/api/translation.py:update_progress","msg":"[DEBUG] step1 progress update","data":{"task_id":task_id,"step":step_index,"step_name":step_name,"progress_pct":progress_pct,"message":tasks[task_id].get("message",""),"current_segment":current_segment,"total_segments":total_segments}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
-                except Exception: 
-                    pass
-                # #endregion
             else:
                 import sys
                 print(f"[ERROR] 任务不存在，无法更新进度: task_id={task_id}", file=sys.stderr, flush=True)
@@ -271,12 +574,6 @@ def execute_translation_task(
         
         logger.info(f"开始调用 translate_media: task_id={task_id}")
         print(f"[LOG] 开始调用 translate_media: task_id={task_id}", file=sys.stderr, flush=True)
-
-        # #region debug-point A:before-translate-media
-        import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
-        try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"A","location":"backend/app/api/translation.py:execute_translation_task:before_translate_media","msg":"[DEBUG] calling translate_media","data":{"task_id":task_id,"input_path":file_path,"source_lang":source_lang,"target_lang":target_lang,"single_speaker":single_speaker}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
-        except Exception: pass
-        # #endregion
 
         # 添加调试信息
         print(f"[DEBUG] 调用translate_media前: task_id={task_id}, file_path={file_path}", file=sys.stderr, flush=True)
@@ -293,12 +590,6 @@ def execute_translation_task(
             webui_mode=True,
             progress_callback=update_progress
         )
-
-        # #region debug-point A:after-translate-media
-        import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
-        try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"A","location":"backend/app/api/translation.py:execute_translation_task:after_translate_media","msg":"[DEBUG] translate_media returned","data":{"task_id":task_id,"success":bool(result.get("success")),"error":result.get("error"),"needs_segment_editing":bool(result.get("needs_segment_editing")),"needs_editing":bool(result.get("needs_editing"))}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
-        except Exception: pass
-        # #endregion
 
         print(f"[DEBUG] translate_media 返回: success={result.get('success', False)}, error={result.get('error', 'None')}", file=sys.stderr, flush=True)
         logger.info(f"translate_media 执行完成: task_id={task_id}, success={result.get('success', False)}")
@@ -336,28 +627,28 @@ def execute_translation_task(
                 tasks[task_id]["final_video_path"] = result.get("final_video_path")
                 tasks[task_id]["final_audio_path"] = result.get("final_audio_path")
                 tasks[task_id]["task_dir"] = result.get("task_dir")
+                tasks[task_id]["updated_at"] = int(__import__("time").time() * 1000)
+                _persist_task_state(tasks[task_id])
                 logger.info(f"任务完成，状态已更新: task_id={task_id}, progress={tasks[task_id]['progress']}, step={tasks[task_id]['current_step']}, final_video_path={result.get('final_video_path')}")
         else:
             error_msg = result.get("error", "翻译失败")
             logger.error(f"翻译任务失败: task_id={task_id}, error={error_msg}")
             tasks[task_id]["status"] = "failed"
             tasks[task_id]["message"] = error_msg
+            tasks[task_id]["updated_at"] = int(__import__("time").time() * 1000)
+            _persist_task_state(tasks[task_id])
             
     except Exception as e:
         error_msg = f"翻译任务执行失败: {str(e)}"
         error_trace = traceback.format_exc()
         logger.error(f"任务执行失败: task_id={task_id}, error={error_msg}")
         logger.error(f"异常堆栈: {error_trace}")
-
-        # #region debug-point B:task-exception
-        import json, urllib.request, os as _os; _p='.dbg/audio-extract-stuck.env'; _u,_s='http://127.0.0.1:7777/event','audio-extract-stuck'; _r=_os.getenv('TRAE_DEBUG_RUN_ID','pre-fix'); exec("try:\n with open(_p) as f: c=f.read(); _u=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SERVER_URL=')),_u); _s=next((l.split('=',1)[1] for l in c.split('\\n') if l.startswith('DEBUG_SESSION_ID=')),_s)\nexcept: pass"); 
-        try: urllib.request.urlopen(urllib.request.Request(_u, data=json.dumps({"sessionId":_s,"runId":_r,"hypothesisId":"B","location":"backend/app/api/translation.py:execute_translation_task:except","msg":"[DEBUG] task exception","data":{"task_id":task_id,"error":error_msg,"trace":error_trace[-1800:]}}).encode(), headers={"Content-Type":"application/json"}), timeout=2).read()
-        except Exception: pass
-        # #endregion
         
         if task_id in tasks:
             tasks[task_id]["status"] = "failed"
             tasks[task_id]["message"] = error_msg
+            tasks[task_id]["updated_at"] = int(__import__("time").time() * 1000)
+            _persist_task_state(tasks[task_id])
         else:
             logger.error(f"任务不存在，无法更新状态: task_id={task_id}")
 
@@ -366,14 +657,31 @@ def execute_translation_task(
 async def get_translation_status(task_id: str):
     """获取翻译任务状态"""
     if task_id not in tasks:
-        # 任务不在字典中，可能是任务已完成或被清空
-        # 这里暂时不做文件系统检查，直接返回不存在
-        # TODO: 可以考虑添加任务持久化存储
-        raise HTTPException(status_code=404, detail="任务不存在")
+        persisted_task = _load_persisted_task_state(task_id)
+        if not persisted_task:
+            raise HTTPException(status_code=404, detail="任务不存在")
+
+        return {
+            "task_id": task_id,
+            "status": persisted_task.get("status", "unknown"),
+            "file_id": persisted_task.get("file_id", ""),
+            "current_step": persisted_task.get("current_step", 0),
+            "progress": persisted_task.get("progress", 0.0),
+            "message": persisted_task.get("message", ""),
+            "step_name": persisted_task.get("step_name", ""),
+            "current_segment": persisted_task.get("current_segment", 0),
+            "total_segments": persisted_task.get("total_segments", 0),
+            "task_dir": persisted_task.get("task_dir"),
+            "final_video_path": _resolve_final_video_path(persisted_task),
+            "final_audio_path": persisted_task.get("final_audio_path"),
+            "source_language": persisted_task.get("source_language", ""),
+            "target_language": persisted_task.get("target_language", ""),
+        }
     
     task = tasks[task_id]
     return {
         "task_id": task_id,
+        "file_id": task.get("file_id", ""),
         "status": task["status"],
         "current_step": task.get("current_step", 0),
         "progress": task.get("progress", 0.0),
@@ -382,8 +690,10 @@ async def get_translation_status(task_id: str):
         "current_segment": task.get("current_segment", 0),
         "total_segments": task.get("total_segments", 0),
         "task_dir": task.get("task_dir"),
-        "final_video_path": task.get("final_video_path"),
+        "final_video_path": _resolve_final_video_path(task),
         "final_audio_path": task.get("final_audio_path"),
+        "source_language": task.get("source_language", ""),
+        "target_language": task.get("target_language", ""),
     }
 
 
@@ -413,7 +723,19 @@ async def continue_translation(task_id: str):
 async def get_translation_result(task_id: str):
     """获取翻译结果（视频/音频文件）"""
     if task_id not in tasks:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        persisted_task = _load_persisted_task_state(task_id)
+        if not persisted_task:
+            raise HTTPException(status_code=404, detail="任务不存在")
+
+        if persisted_task.get("status") != "completed":
+            raise HTTPException(status_code=400, detail="翻译任务尚未完成")
+
+        return {
+            "task_id": task_id,
+            "video_path": _resolve_final_video_path(persisted_task),
+            "audio_path": persisted_task.get("final_audio_path"),
+            "task_dir": persisted_task.get("task_dir"),
+        }
     
     task = tasks[task_id]
     if task["status"] != "completed":
@@ -421,8 +743,7 @@ async def get_translation_result(task_id: str):
     
     return {
         "task_id": task_id,
-        "video_path": task.get("final_video_path"),
+        "video_path": _resolve_final_video_path(task),
         "audio_path": task.get("final_audio_path"),
         "task_dir": task.get("task_dir"),
     }
-

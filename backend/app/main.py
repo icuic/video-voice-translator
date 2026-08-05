@@ -38,7 +38,9 @@ class LargeFileUploadMiddleware(BaseHTTPMiddleware):
         if request.method == "POST" and "/api/media/upload" in str(request.url):
             # Starlette 默认限制是 1MB，这里通过修改 request 的 _receive 来支持大文件
             # 注意：实际限制由 uvicorn 的配置控制
-            pass
+            response = await call_next(request)
+            return response
+
         response = await call_next(request)
         return response
 
