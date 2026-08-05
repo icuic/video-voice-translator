@@ -127,23 +127,14 @@ Additional examples are available in [docs/USAGE.md](docs/USAGE.md).
 - If the environment is remote, SSH port forwarding is recommended for local access during evaluation.
 - Completed jobs are persisted under `data/task_states/` and outputs are written to `data/outputs/`.
 
-## Submission Package
-
-All contest-oriented materials are grouped under [submission/](submission/README.md):
-
-- Submission index: [submission/README.md](submission/README.md)
-- Submission note: [submission/SUBMISSION_NOTE.md](submission/SUBMISSION_NOTE.md)
-- Project profile source: [submission/PROJECT_PROFILE.md](submission/PROJECT_PROFILE.md)
-- Project profile PDF: [submission/track1-project-profile.pdf](submission/track1-project-profile.pdf)
-- Poster: [submission/track1-poster.svg](submission/track1-poster.svg)
-- Demo video guide: [submission/DEMO_VIDEO.md](submission/DEMO_VIDEO.md)
-
 ## Repository Guide
 
+- Main Chinese README: [README.md](README.md)
 - Installation guide: [docs/INSTALL.md](docs/INSTALL.md)
 - Usage guide: [docs/USAGE.md](docs/USAGE.md)
 - Demo guide: [docs/DEMO.md](docs/DEMO.md)
-- English backup README: [README_EN.md](README_EN.md)
+- Track 1 submission note: [docs/SUBMISSION_TRACK1_EN.md](docs/SUBMISSION_TRACK1_EN.md)
+- Track 1 project profile source: [docs/PROJECT_PROFILE_TRACK1_EN.md](docs/PROJECT_PROFILE_TRACK1_EN.md)
 
 ## Known Limitations
 
