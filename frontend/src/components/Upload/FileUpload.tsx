@@ -3,6 +3,7 @@ import { mediaService } from '../../services/media';
 import { translationService } from '../../services/translation';
 import { TranslationHistoryItem } from '../../types/media';
 import { HistoryTaskList } from './HistoryTaskList';
+import { translateTaskText } from '../../utils/taskText';
 
 interface FileUploadProps {
   onUploadComplete: (fileId: string, taskId: string) => void;
@@ -31,7 +32,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({
         const tasks = await translationService.getHistory(12, 'completed');
         setHistoryTasks(tasks);
       } catch (error) {
-        console.error('加载历史任务失败:', error);
+        console.error('Failed to load history tasks:', error);
       } finally {
         setIsLoadingHistory(false);
       }
@@ -55,7 +56,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({
   const handleDeleteHistoryTask = async (task: TranslationHistoryItem) => {
     const displayName = task.original_filename || task.file_name || task.task_id;
     const confirmed = window.confirm(
-      `确认删除历史任务“${displayName}”吗？\n\n这会删除该任务的历史记录和输出结果目录。`
+      `Delete the history task "${displayName}"?\n\nThis will remove the task record and its output directory.`
     );
 
     if (!confirmed) {
@@ -67,8 +68,8 @@ export const FileUpload: React.FC<FileUploadProps> = ({
       await translationService.deleteHistoryTask(task.task_id);
       setHistoryTasks((prev) => prev.filter((item) => item.task_id !== task.task_id));
     } catch (error) {
-      console.error('删除历史任务失败:', error);
-      alert('删除历史任务失败，请稍后重试或查看后端日志。');
+      console.error('Failed to delete history task:', error);
+      alert('Failed to delete the history task. Please try again later or check the backend logs.');
     } finally {
       setDeletingTaskIds((prev) => {
         const next = { ...prev };
@@ -110,7 +111,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({
     const audioExts = ['wav', 'mp3', 'm4a', 'flac', 'aac', 'ogg'];
     
     if (!videoExts.includes(ext || '') && !audioExts.includes(ext || '')) {
-      alert('不支持的文件格式。支持的格式：视频 (MP4, AVI, MOV, MKV) 或 音频 (WAV, MP3, M4A)');
+      alert('Unsupported file format. Supported formats: video (MP4, AVI, MOV, MKV) or audio (WAV, MP3, M4A).');
       return;
     }
 
@@ -124,7 +125,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({
     // 检查文件大小
     if (file.size > maxSizeBytes) {
       const maxSizeDisplay = maxSizeMB || '100';
-      alert(`文件大小超过 ${maxSizeDisplay}MB，请使用较小的文件`);
+      alert(`File size exceeds ${maxSizeDisplay}MB. Please choose a smaller file.`);
       return;
     }
 
@@ -158,7 +159,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({
       setIsStarting(true);
       setUploadProgress(90); // 上传完成，进度设为90%
       
-      console.log('正在启动翻译任务...', { fileId: mediaFile.id, sourceLanguage, targetLanguage });
+      console.log('Starting translation task...', { fileId: mediaFile.id, sourceLanguage, targetLanguage });
       
       // 添加超时处理
       const startTranslationPromise = translationService.startTranslation({
@@ -173,36 +174,36 @@ export const FileUpload: React.FC<FileUploadProps> = ({
       // 设置超时（30秒）
       const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => {
-          reject(new Error('启动翻译任务超时，请检查后端服务是否正常运行'));
+          reject(new Error('Starting the translation task timed out. Please make sure the backend service is running.'));
         }, 30000);
       });
       
       const task = await Promise.race([startTranslationPromise, timeoutPromise]) as any;
 
-      console.log('翻译任务启动成功:', task);
+      console.log('Translation task started successfully:', task);
       setUploadProgress(100); // 任务启动完成
       // 上传和启动任务成功，通知父组件（父组件会显示进度界面）
       onUploadComplete(mediaFile.id, task.id);
       // 注意：这里不重置状态，让父组件处理界面切换
     } catch (error: any) {
-      console.error('上传错误:', error);
-      let errorMessage = '未知错误';
+      console.error('Upload error:', error);
+      let errorMessage = 'Unknown error';
       
       if (error.message) {
-        errorMessage = error.message;
+        errorMessage = translateTaskText(error.message);
       } else if (error.response?.data?.detail) {
-        errorMessage = error.response.data.detail;
+        errorMessage = translateTaskText(error.response.data.detail);
       } else if (error.response?.data?.message) {
-        errorMessage = error.response.data.message;
+        errorMessage = translateTaskText(error.response.data.message);
       } else if (error.code === 'ECONNABORTED') {
-        errorMessage = '请求超时，请检查网络连接或后端服务是否正常运行';
-      } else if (error.message?.includes('超时')) {
-        errorMessage = error.message;
+        errorMessage = 'Request timed out. Please check your network connection or backend service.';
+      } else if (error.message?.includes('超时') || error.message?.toLowerCase().includes('timeout')) {
+        errorMessage = translateTaskText(error.message);
       } else {
-        errorMessage = '网络错误，请检查后端服务是否运行';
+        errorMessage = 'Network error. Please make sure the backend service is running.';
       }
       
-      alert(`上传失败: ${errorMessage}\n\n如果问题持续，请检查：\n1. 后端服务是否正常运行\n2. 浏览器控制台是否有更多错误信息\n3. 后端日志文件`);
+      alert(`Upload failed: ${errorMessage}\n\nIf the issue persists, please check:\n1. Whether the backend service is running\n2. Whether the browser console shows more errors\n3. The backend log files`);
       setIsUploading(false);
       setIsStarting(false);
       setUploadProgress(0);
@@ -228,15 +229,17 @@ export const FileUpload: React.FC<FileUploadProps> = ({
             </div>
             <h1 className="text-3xl font-bold text-white">Video Voice Translator</h1>
           </div>
-          <a 
-            href="https://github.com" 
-            target="_blank" 
+          <a
+            href="https://notebooks.amd.com"
+            target="_blank"
             rel="noopener noreferrer"
-            className="text-white hover:text-indigo-400 transition-colors"
+            className="flex items-center"
           >
-            <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
-            </svg>
+            <img
+              src="https://notebooks.amd.com/static/image.png"
+              alt="AMD Notebooks"
+              className="h-8 w-auto max-w-[160px] object-contain brightness-0 invert"
+            />
           </a>
         </div>
 
@@ -321,28 +324,28 @@ export const FileUpload: React.FC<FileUploadProps> = ({
               {/* Language Selection */}
               <div className="flex gap-4 justify-center">
                 <div>
-                  <label className="block text-sm text-slate-400 mb-1">源语言</label>
+                  <label className="block text-sm text-slate-400 mb-1">Source Language</label>
                   <select
                     value={sourceLanguage}
                     onChange={(e) => handleSourceLanguageChange(e.target.value)}
                     onClick={(e) => e.stopPropagation()}
                     className="px-4 py-2 bg-slate-700 text-white rounded-lg border border-slate-600 focus:border-indigo-500 focus:outline-none"
                   >
-                    <option value="">请选择源语言</option>
-                    <option value="zh">中文</option>
+                    <option value="">Select source language</option>
+                    <option value="zh">Chinese</option>
                     <option value="en">English</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm text-slate-400 mb-1">目标语言</label>
+                  <label className="block text-sm text-slate-400 mb-1">Target Language</label>
                   <select
                     value={targetLanguage}
                     onChange={(e) => handleTargetLanguageChange(e.target.value)}
                     onClick={(e) => e.stopPropagation()}
                     className="px-4 py-2 bg-slate-700 text-white rounded-lg border border-slate-600 focus:border-indigo-500 focus:outline-none"
                   >
-                    <option value="">请选择目标语言</option>
-                    <option value="zh">中文</option>
+                    <option value="">Select target language</option>
+                    <option value="zh">Chinese</option>
                     <option value="en">English</option>
                   </select>
                 </div>
@@ -359,8 +362,8 @@ export const FileUpload: React.FC<FileUploadProps> = ({
                   </div>
                   <p className="text-sm text-slate-400">
                     {isStarting
-                      ? '正在启动翻译任务...'
-                      : `正在上传文件... ${Math.round(uploadProgress)}%`}
+                      ? 'Starting translation task...'
+                      : `Uploading file... ${Math.round(uploadProgress)}%`}
                   </p>
                 </div>
               )}
@@ -375,7 +378,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({
                   }}
                   className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-colors mx-auto block"
                 >
-                  开始翻译
+                  Start Translation
                 </button>
               )}
             </div>

@@ -242,7 +242,7 @@ export const Timeline: React.FC<TimelineProps> = ({
   return (
     <div className="bg-slate-800 rounded-lg p-4">
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-lg font-semibold text-white">时间轴</h3>
+        <h3 className="text-lg font-semibold text-white">Timeline</h3>
         <div className="flex items-center gap-2">
           <button
             onClick={() => setZoom(Math.max(0.1, zoom - 0.2))}
@@ -407,7 +407,7 @@ export const Timeline: React.FC<TimelineProps> = ({
 
         {/* 时间显示 */}
         <div className="mt-2 text-center text-sm text-slate-400">
-          当前: {formatTime(currentTime)} / 总时长: {formatTime(duration)}
+          Current: {formatTime(currentTime)} / Total: {formatTime(duration)}
         </div>
       </div>
     </div>

@@ -71,7 +71,7 @@ export const SegmentList: React.FC<SegmentListProps> = ({
 
   return (
     <div className="bg-slate-800 rounded-lg p-4">
-      <h3 className="text-xl font-semibold text-white mb-4">字幕列表</h3>
+      <h3 className="text-xl font-semibold text-white mb-4">Segments</h3>
       <div
         ref={listRef}
         className="space-y-2 max-h-[600px] overflow-y-auto"
@@ -105,5 +105,4 @@ export const SegmentList: React.FC<SegmentListProps> = ({
     </div>
   );
 };
-
 

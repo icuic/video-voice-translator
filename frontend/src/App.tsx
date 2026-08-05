@@ -10,6 +10,7 @@ import { translationService } from './services/translation';
 import { mediaService } from './services/media';
 import { Segment } from './types/segment';
 import { TranslationTask, TranslationHistoryItem } from './types/media';
+import { translateTaskText } from './utils/taskText';
 
 function App() {
   const { segments, setSegments, updateSegment, deleteSegment } = useSegmentStore();
@@ -82,7 +83,7 @@ function App() {
       wsRef.current = ws;
 
       ws.onopen = () => {
-        console.log('WebSocket 连接已建立:', taskId);
+        console.log('WebSocket connected:', taskId);
       };
 
       ws.onmessage = (event) => {
@@ -90,7 +91,7 @@ function App() {
           const data = JSON.parse(event.data);
           if (data.type === 'resynthesize_complete') {
             const segmentId = data.segment_id;
-            console.log('收到重新合成完成通知:', segmentId);
+            console.log('Received resynthesis completion notification:', segmentId);
 
             // 更新按钮状态
             setIsResynthesizing(prev => ({ ...prev, [segmentId]: false }));
@@ -117,25 +118,25 @@ function App() {
               });
               setSegments(mergedSegments);
             }).catch(error => {
-              console.error('重新加载分段列表失败:', error);
+              console.error('Failed to reload segment list:', error);
             });
           }
         } catch (error) {
-          console.error('解析WebSocket消息失败:', error);
+          console.error('Failed to parse WebSocket message:', error);
         }
       };
 
       ws.onerror = (error) => {
-        console.error('WebSocket 错误:', error);
+        console.error('WebSocket error:', error);
       };
 
       ws.onclose = (event) => {
-        console.log('WebSocket 连接已关闭，原因:', event.code, event.reason);
+        console.log('WebSocket closed:', event.code, event.reason);
         wsRef.current = null;
 
         // 如果是非正常关闭（不是组件卸载导致的），尝试重连
         if (event.code !== 1000 && event.code !== 1001) {
-          console.log('尝试重连WebSocket...');
+          console.log('Attempting to reconnect WebSocket...');
           setTimeout(connectWebSocket, 2000); // 2秒后重试
         }
       };
@@ -169,7 +170,7 @@ function App() {
             const segs = await segmentService.getSegments(tid);
             setSegments(segs);
           } catch (error) {
-            console.warn('无法加载分段数据（可能任务已完成，分段文件不存在）:', error);
+            console.warn('Failed to load segment data (task may be complete and segment files may be missing):', error);
             // 如果分段数据不存在，设置为空数组
             setSegments([]);
           }
@@ -195,7 +196,7 @@ function App() {
         } else if (status.status === 'failed') {
           setShowProgress(false);
           setShowEditor(false);
-          alert('翻译任务失败: ' + status.message);
+          alert('Translation task failed: ' + translateTaskText(status.message));
         return; // 停止轮询
         } else if (status.status === 'processing' || status.status === 'pending') {
           // 任务处理中或等待中，显示进度
@@ -221,7 +222,7 @@ function App() {
       }
 
       } catch (error) {
-        console.error('获取任务状态失败:', error);
+        console.error('Failed to fetch task status:', error);
       // 网络错误时使用更长的间隔重试
       const retryInterval = Math.min(5000 + pollCount * 500, 15000); // 最长15秒
       if (pollCount * 1000 < 15 * 60 * 1000) {
@@ -264,7 +265,7 @@ function App() {
         setShowEditor(true);
       }
     } catch (error) {
-      console.error('获取初始任务状态失败:', error);
+      console.error('Failed to fetch initial task status:', error);
       // 即使获取失败，也显示进度界面
       setShowProgress(true);
       setShowEditor(false);
@@ -303,7 +304,7 @@ function App() {
         const segs = await segmentService.getSegments(task.task_id);
         setSegments(segs);
       } catch (error) {
-        console.warn('加载历史任务分段失败:', error);
+        console.warn('Failed to load segments for history task:', error);
         setSegments([]);
       }
 
@@ -316,8 +317,8 @@ function App() {
         pollTaskStatus(task.task_id);
       }
     } catch (error) {
-      console.error('打开历史任务失败:', error);
-      alert('打开历史任务失败，请稍后重试。');
+      console.error('Failed to open history task:', error);
+      alert('Failed to open the history task. Please try again later.');
       resetWorkspace();
     }
   };
@@ -391,23 +392,23 @@ function App() {
   const handleSegmentUpdate = async (segment: Segment) => {
     if (!taskId) return;
     try {
-      console.log('准备更新分段:', segment);
-      console.log('当前segments数组长度:', segments.length);
+      console.log('Preparing to update segment:', segment);
+      console.log('Current segment array length:', segments.length);
 
       // 直接构造更新后的segments数组，确保包含所有分段
       const updatedSegments = segments.map(s => s.id === segment.id ? segment : s);
-      console.log('更新后的segments长度:', updatedSegments.length);
+      console.log('Updated segment array length:', updatedSegments.length);
 
       // 更新store状态
       updateSegment(segment);
 
       // 发送完整的分段列表，确保后端不会丢失其他分段
       await segmentService.updateSegments(taskId, updatedSegments);
-      console.log('分段更新成功');
+      console.log('Segment update succeeded');
     } catch (error) {
-      console.error('保存分段失败:', error);
-      const errorMessage = error instanceof Error ? error.message : '未知错误';
-      alert(`保存分段失败: ${errorMessage}`);
+      console.error('Failed to save segment:', error);
+      const errorMessage = error instanceof Error ? translateTaskText(error.message) : 'Unknown error';
+      alert(`Failed to save segment: ${errorMessage}`);
       // 如果保存失败，回滚前端状态
       // 这里可以重新加载分段列表，或者显示错误状态
     }
@@ -428,9 +429,9 @@ function App() {
       const updated = await segmentService.retranslateSegment(taskId, segmentId, newText);
       updateSegment(updated);
     } catch (error) {
-      console.error('翻译失败:', error);
-      const errorMessage = error instanceof Error ? error.message : '未知错误';
-      alert(`翻译失败: ${errorMessage}`);
+      console.error('Translation failed:', error);
+      const errorMessage = error instanceof Error ? translateTaskText(error.message) : 'Unknown error';
+      alert(`Translation failed: ${errorMessage}`);
     } finally {
       setIsRetranslating(prev => ({ ...prev, [segmentId]: false }));
     }
@@ -452,9 +453,9 @@ function App() {
       pollSegmentStatus(taskId, segmentId);
 
     } catch (error) {
-      console.error('启动重新合成失败:', error);
-      const errorMessage = error instanceof Error ? error.message : '未知错误';
-      alert(`启动重新合成失败: ${errorMessage}`);
+      console.error('Failed to start resynthesis:', error);
+      const errorMessage = error instanceof Error ? translateTaskText(error.message) : 'Unknown error';
+      alert(`Failed to start resynthesis: ${errorMessage}`);
       setIsResynthesizing(prev => ({ ...prev, [segmentId]: false }));
     }
   };
@@ -471,9 +472,9 @@ function App() {
         handleSegmentClick(firstNewSegment);
       }
     } catch (error) {
-      console.error('拆分分段失败:', error);
-      const errorMessage = error instanceof Error ? error.message : '未知错误';
-      alert(`拆分分段失败: ${errorMessage}`);
+      console.error('Failed to split segment:', error);
+      const errorMessage = error instanceof Error ? translateTaskText(error.message) : 'Unknown error';
+      alert(`Failed to split segment: ${errorMessage}`);
       throw error; // 重新抛出错误，让 SegmentItem 知道拆分失败
     }
   };
@@ -488,7 +489,7 @@ function App() {
       if (response.ok) {
         const status = await response.json();
         if (status.status === 'completed') {
-          console.log(`轮询检测到分段 ${segmentId} 合成完成`);
+          console.log(`Polling detected segment ${segmentId} resynthesis completion`);
           // 更新按钮状态
           setIsResynthesizing(prev => ({ ...prev, [segmentId]: false }));
 
@@ -514,7 +515,7 @@ function App() {
             });
             setSegments(mergedSegments);
           }).catch(error => {
-            console.error('重新加载分段列表失败:', error);
+            console.error('Failed to reload segment list:', error);
           });
 
           return; // 停止轮询
@@ -525,7 +526,7 @@ function App() {
         try {
           const audioResponse = await fetch(`/api/segments/${taskId}/segments/${segmentId}/cloned-audio`, { method: 'HEAD' });
           if (audioResponse.ok) {
-            console.log(`检测到分段 ${segmentId} 音频文件存在，假设合成已完成`);
+            console.log(`Detected audio output for segment ${segmentId}; assuming resynthesis is complete`);
             // 更新按钮状态
             setIsResynthesizing(prev => ({ ...prev, [segmentId]: false }));
 
@@ -551,24 +552,24 @@ function App() {
               });
               setSegments(mergedSegments);
             }).catch(error => {
-              console.error('重新加载分段列表失败:', error);
+              console.error('Failed to reload segment list:', error);
             });
 
             return; // 停止轮询
           }
         } catch (audioError) {
-          console.warn('检查音频文件失败:', audioError);
+          console.warn('Failed to check audio file:', audioError);
         }
       }
     } catch (error) {
-      console.error('检查分段状态失败:', error);
+      console.error('Failed to check segment status:', error);
     }
 
     // 如果还没完成且未达到最大尝试次数，继续轮询
     if (attemptCount < maxAttempts) {
       setTimeout(() => pollSegmentStatus(taskId, segmentId, attemptCount + 1), pollInterval);
     } else {
-      console.warn(`分段 ${segmentId} 合成状态检查超时，停止轮询`);
+      console.warn(`Timed out while checking segment ${segmentId} resynthesis status`);
       // 超时后设置按钮状态为非合成中（用户可以手动刷新或重试）
       setIsResynthesizing(prev => ({ ...prev, [segmentId]: false }));
     }
@@ -590,7 +591,7 @@ function App() {
     setIsRegenerating(true);
     try {
       await segmentService.regenerateFinal(taskId);
-      alert('重新生成最终视频任务已启动，请稍候...');
+      alert('Final video regeneration has started. Please wait...');
       
       // 清空已重新合成的分段集合
       setResynthesizedSegments(new Set());
@@ -632,11 +633,11 @@ function App() {
               // 只弹出一次提示
               if (!hasShownRegenerateAlertRef.current) {
                 hasShownRegenerateAlertRef.current = true;
-                alert('最终视频已重新生成！');
+                alert('The final video has been regenerated.');
               }
             }
           } catch (error) {
-            console.error('检查视频生成状态失败:', error);
+            console.error('Failed to check final video generation status:', error);
             if (attempts >= maxAttempts) {
               if (regenerateCheckIntervalRef.current) {
                 clearInterval(regenerateCheckIntervalRef.current);
@@ -651,14 +652,14 @@ function App() {
           }
           if (!hasShownRegenerateAlertRef.current) {
             hasShownRegenerateAlertRef.current = true;
-            alert('视频生成可能需要更长时间，请稍后刷新页面查看。');
+            alert('Video generation may take longer. Please refresh the page and check again later.');
           }
         }
       }, 2000); // 每2秒检查一次
     } catch (error) {
-      console.error('启动重新生成失败:', error);
-      const errorMessage = error instanceof Error ? error.message : '未知错误';
-      alert(`启动重新生成失败: ${errorMessage}`);
+      console.error('Failed to start final video regeneration:', error);
+      const errorMessage = error instanceof Error ? translateTaskText(error.message) : 'Unknown error';
+      alert(`Failed to start final video regeneration: ${errorMessage}`);
     } finally {
       setIsRegenerating(false);
     }
@@ -683,7 +684,7 @@ function App() {
           status: 'pending' as const,
           current_step: 0,
           progress: 0,
-          message: '正在启动翻译任务...',
+          message: 'Starting translation task...',
         };
         
         return (
@@ -734,9 +735,9 @@ function App() {
                     : 'bg-orange-600 hover:bg-orange-700 text-white'
                   }
                 `}
-                title={`有 ${pendingRegenerateCount} 个分段已重新合成，需要重新生成最终视频以应用更改`}
+                title={`${pendingRegenerateCount} segments have been resynthesized. Regenerate the final video to apply those updates.`}
               >
-                重新生成最终视频
+                Regenerate Final Video
                 <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
                   {pendingRegenerateCount}
                 </span>
@@ -746,7 +747,7 @@ function App() {
               onClick={resetWorkspace}
               className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
             >
-              上传新文件
+              Upload New File
             </button>
           </div>
         </div>
@@ -756,7 +757,7 @@ function App() {
           <div className="lg:col-span-2 sticky top-0 z-10 lg:static lg:z-auto bg-slate-900 pb-4 lg:pb-0">
             {/* 原始视频 / 配音视频 切换标签 */}
             <div className="flex items-center gap-2 mb-3">
-              <span className="text-sm text-slate-400">视频源：</span>
+              <span className="text-sm text-slate-400">Video Source:</span>
               <div className="flex rounded-lg bg-slate-800 p-1 text-sm">
                 <button
                   onClick={() => setVideoSource('original')}
@@ -766,7 +767,7 @@ function App() {
                       : 'text-slate-300 hover:text-white'
                   }`}
                 >
-                  原始视频
+                  Original Video
                 </button>
                 <button
                   onClick={() => dubbedVideoUrl && setVideoSource('dubbed')}
@@ -778,9 +779,9 @@ function App() {
                         : 'text-slate-500 cursor-not-allowed'
                   }`}
                   disabled={!dubbedVideoUrl}
-                  title={dubbedVideoUrl ? '查看配音后视频' : '配音视频尚未生成'}
+                  title={dubbedVideoUrl ? 'View the dubbed output video' : 'Dubbed video is not available yet'}
                 >
-                  配音视频
+                  Dubbed Video
                 </button>
               </div>
             </div>

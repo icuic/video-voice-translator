@@ -1,5 +1,6 @@
 import React from 'react';
 import { TranslationTask } from '../../types/media';
+import { translateTaskText } from '../../utils/taskText';
 
 interface TranslationProgressProps {
   task: TranslationTask;
@@ -8,19 +9,18 @@ interface TranslationProgressProps {
 export const TranslationProgress: React.FC<TranslationProgressProps> = ({ task }) => {
   const { status, progress, message, step_name, current_segment, total_segments } = task;
 
-  // 构建进度文本
   const getProgressText = () => {
     if (status === 'processing') {
-      return step_name || message || '处理中...';
+      return translateTaskText(step_name) || translateTaskText(message) || 'Processing...';
     }
-    return message;
+    return translateTaskText(message);
   };
 
   return (
     <div className="w-full max-w-2xl mx-auto bg-slate-800 rounded-lg p-6 border border-slate-700">
       <div className="mb-4">
         <div className="flex items-center justify-between mb-2">
-          <h3 className="text-lg font-semibold text-white">翻译进度</h3>
+          <h3 className="text-lg font-semibold text-white">Translation Progress</h3>
           <span className="text-sm text-slate-400">{Math.round(progress)}%</span>
         </div>
         
@@ -62,11 +62,10 @@ export const TranslationProgress: React.FC<TranslationProgressProps> = ({ task }
         {/* 详细进度信息（如果有片段信息） */}
         {(current_segment ?? 0) > 0 && (total_segments ?? 0) > 0 && (
           <div className="ml-4 text-sm text-slate-400">
-            正在处理第 {current_segment} 个片段，共 {total_segments} 个片段
+            Processing segment {current_segment} of {total_segments}
           </div>
         )}
       </div>
     </div>
   );
 };
-

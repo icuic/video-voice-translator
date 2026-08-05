@@ -120,7 +120,7 @@ export const SegmentItem: React.FC<SegmentItemProps> = ({
         setIsManualTranslating(false);
       } catch (error) {
         // 错误已在 App.tsx 的 handleRetranslate 中处理，这里只关闭编辑模式
-        console.error('保存手动翻译失败:', error);
+        console.error('Failed to save manual translation:', error);
         // 可以选择保持编辑模式让用户重试，或者关闭
         // setIsManualTranslating(false);
       }
@@ -183,7 +183,7 @@ export const SegmentItem: React.FC<SegmentItemProps> = ({
     
     // 验证光标位置（不能在开头或结尾）
     if (cursorPosition <= 0 || cursorPosition >= textLength) {
-      alert('光标位置无效，请在文本中间位置放置光标');
+      alert('Invalid cursor position. Please place the cursor somewhere in the middle of the text.');
       return;
     }
     
@@ -191,7 +191,7 @@ export const SegmentItem: React.FC<SegmentItemProps> = ({
       await onSplit(segment.id, cursorPosition);
       setIsSplitting(false);
     } catch (error) {
-      console.error('拆分失败:', error);
+      console.error('Split failed:', error);
       // 错误已在 App.tsx 中处理，这里只关闭拆分模式
       setIsSplitting(false);
     }
@@ -218,7 +218,7 @@ export const SegmentItem: React.FC<SegmentItemProps> = ({
       
       // 播放原始音频
       refAudioRef.current?.play().catch((err) => {
-        console.error('播放原始音频失败:', err);
+        console.error('Failed to play source audio:', err);
         setPlayingRefAudio(false);
       });
       setPlayingRefAudio(true);
@@ -241,7 +241,7 @@ export const SegmentItem: React.FC<SegmentItemProps> = ({
       
       // 播放克隆音频
       clonedAudioRef.current?.play().catch((err) => {
-        console.error('播放克隆音频失败:', err);
+        console.error('Failed to play cloned audio:', err);
         setPlayingClonedAudio(false);
       });
       setPlayingClonedAudio(true);
@@ -295,7 +295,7 @@ export const SegmentItem: React.FC<SegmentItemProps> = ({
                 }}
                 className="text-yellow-400 hover:text-yellow-300 text-sm"
               >
-                拆分
+                Split
               </button>
             )}
             <button
@@ -305,7 +305,7 @@ export const SegmentItem: React.FC<SegmentItemProps> = ({
               }}
               className="text-indigo-400 hover:text-indigo-300 text-sm"
             >
-              编辑
+              Edit
             </button>
             <button
               onClick={(e) => {
@@ -314,7 +314,7 @@ export const SegmentItem: React.FC<SegmentItemProps> = ({
               }}
               className="text-red-400 hover:text-red-300 text-sm"
             >
-              删除
+              Delete
             </button>
           </div>
         )}
@@ -328,14 +328,14 @@ export const SegmentItem: React.FC<SegmentItemProps> = ({
               value={startTime}
               onChange={(e) => setStartTime(e.target.value)}
               className="flex-1 px-2 py-1 bg-slate-900 text-white rounded text-sm"
-              placeholder="开始时间"
+              placeholder="Start time"
             />
             <input
               type="number"
               value={endTime}
               onChange={(e) => setEndTime(e.target.value)}
               className="flex-1 px-2 py-1 bg-slate-900 text-white rounded text-sm"
-              placeholder="结束时间"
+              placeholder="End time"
             />
           </div>
           <textarea
@@ -343,27 +343,27 @@ export const SegmentItem: React.FC<SegmentItemProps> = ({
             onChange={(e) => setText(e.target.value)}
             className="w-full px-2 py-1 bg-slate-900 text-white rounded text-sm"
             rows={2}
-            placeholder="原文"
+            placeholder="Source text"
           />
           <textarea
             value={translatedText}
             onChange={(e) => setTranslatedText(e.target.value)}
             className="w-full px-2 py-1 bg-slate-900 text-white rounded text-sm"
             rows={2}
-            placeholder="译文"
+            placeholder="Translated text"
           />
           <div className="flex gap-2">
             <button
               onClick={handleSave}
               className="px-3 py-1 bg-indigo-600 text-white rounded text-sm hover:bg-indigo-700"
             >
-              保存
+              Save
             </button>
             <button
               onClick={onCancel}
               className="px-3 py-1 bg-slate-600 text-white rounded text-sm hover:bg-slate-700"
             >
-              取消
+              Cancel
             </button>
           </div>
         </div>
@@ -374,7 +374,7 @@ export const SegmentItem: React.FC<SegmentItemProps> = ({
             defaultValue={segment.text}
             className="w-full px-2 py-1 bg-slate-900 text-white rounded text-sm border border-yellow-500 focus:border-yellow-400 focus:outline-none cursor-text"
             rows={3}
-            placeholder="在此处定位光标以拆分分段"
+            placeholder="Place the cursor where you want to split this segment"
             onKeyDown={(e) => {
               if (e.key === 'Escape') {
                 handleCancelSplit();
@@ -429,13 +429,13 @@ export const SegmentItem: React.FC<SegmentItemProps> = ({
               onClick={handleConfirmSplit}
               className="px-3 py-1 bg-yellow-600 text-white rounded text-sm hover:bg-yellow-700"
             >
-              确认拆分
+              Confirm Split
             </button>
             <button
               onClick={handleCancelSplit}
               className="px-3 py-1 bg-slate-600 text-white rounded text-sm hover:bg-slate-700"
             >
-              取消
+              Cancel
             </button>
           </div>
         </div>
@@ -447,7 +447,7 @@ export const SegmentItem: React.FC<SegmentItemProps> = ({
               <button
                 onClick={handleRefAudioToggle}
                 className="text-green-400 hover:text-green-300 text-sm transition-colors"
-                title="播放原始音频"
+                title="Play source audio"
               >
                 {playingRefAudio ? '⏸️' : '▶️'}
               </button>
@@ -461,7 +461,7 @@ export const SegmentItem: React.FC<SegmentItemProps> = ({
                 onChange={(e) => setManualTranslationText(e.target.value)}
                 className="w-full px-2 py-1 bg-slate-900 text-white rounded text-sm border border-indigo-500 focus:border-indigo-400 focus:outline-none"
                 rows={3}
-                placeholder="请输入翻译文本"
+                placeholder="Enter translated text"
                 autoFocus
                 onKeyDown={(e) => {
                   if (e.key === 'Escape') {
@@ -481,19 +481,19 @@ export const SegmentItem: React.FC<SegmentItemProps> = ({
                   onClick={handleManualTranslationSave}
                   className="px-3 py-1 bg-indigo-600 text-white rounded text-xs hover:bg-indigo-700 transition-colors"
                 >
-                  保存
+                  Save
                 </button>
                 <button
                   onClick={handleManualTranslationCancel}
                   className="px-3 py-1 bg-slate-600 text-white rounded text-xs hover:bg-slate-700 transition-colors"
                 >
-                  取消
+                  Cancel
                 </button>
               </div>
             </div>
           ) : (
             <p className="text-slate-300 text-sm inline-flex items-center gap-2">
-              {segment.translated_text || '未翻译'}
+              {segment.translated_text || 'Not translated yet'}
               {taskId && (
                 <button
                   onClick={handleClonedAudioToggle}
@@ -501,7 +501,7 @@ export const SegmentItem: React.FC<SegmentItemProps> = ({
                   className={`text-green-400 hover:text-green-300 text-sm transition-colors ${
                     isResynthesizing ? 'opacity-50 cursor-not-allowed' : ''
                   }`}
-                  title={isResynthesizing ? '合成中，请稍候...' : '播放克隆音频'}
+                  title={isResynthesizing ? 'Synthesizing, please wait...' : 'Play cloned audio'}
                 >
                   {playingClonedAudio ? '⏸️' : '▶️'}
                 </button>
@@ -518,7 +518,7 @@ export const SegmentItem: React.FC<SegmentItemProps> = ({
                 disabled={isRetranslating}
                 className="px-2 py-1 bg-indigo-600 text-white rounded text-xs hover:bg-indigo-700 disabled:opacity-50"
               >
-                {isRetranslating ? '翻译中...' : '重新翻译'}
+                {isRetranslating ? 'Translating...' : 'Retranslate'}
               </button>
               <button
                 onClick={(e) => {
@@ -528,7 +528,7 @@ export const SegmentItem: React.FC<SegmentItemProps> = ({
                 disabled={isRetranslating}
                 className="px-2 py-1 bg-indigo-600 text-white rounded text-xs hover:bg-indigo-700 disabled:opacity-50"
               >
-                手动翻译
+                Manual Edit
               </button>
               <button
                 onClick={(e) => {
@@ -538,7 +538,7 @@ export const SegmentItem: React.FC<SegmentItemProps> = ({
                 disabled={isResynthesizing}
                 className="px-2 py-1 bg-purple-600 text-white rounded text-xs hover:bg-purple-700 disabled:opacity-50"
               >
-                {isResynthesizing ? '合成中...' : '重新合成'}
+                {isResynthesizing ? 'Synthesizing...' : 'Resynthesize'}
               </button>
 
               {/* 时长差异指示器 */}
@@ -546,7 +546,7 @@ export const SegmentItem: React.FC<SegmentItemProps> = ({
                 <div className="ml-auto">
                   <span
                     className={`px-2 py-1 rounded text-xs font-medium ${getDurationIndicatorColor(segment.duration_multiplier)}`}
-                    title={`原始时长: ${(segment.end - segment.start).toFixed(2)}s, 克隆时长: ${segment.cloned_duration?.toFixed(2)}s`}
+                    title={`Original duration: ${(segment.end - segment.start).toFixed(2)}s, Cloned duration: ${segment.cloned_duration?.toFixed(2)}s`}
                   >
                     {segment.duration_multiplier.toFixed(2)}x
                   </span>
@@ -562,7 +562,7 @@ export const SegmentItem: React.FC<SegmentItemProps> = ({
                 src={segmentService.getRefAudioUrl(taskId, segment.id)}
                 onEnded={() => setPlayingRefAudio(false)}
                 onError={() => {
-                  console.error('原始音频加载失败');
+                  console.error('Failed to load source audio');
                   setPlayingRefAudio(false);
                 }}
               />
@@ -571,7 +571,7 @@ export const SegmentItem: React.FC<SegmentItemProps> = ({
                 src={segmentService.getClonedAudioUrl(taskId, segment.id, audioVersion)}
                 onEnded={() => setPlayingClonedAudio(false)}
                 onError={() => {
-                  console.error('克隆音频加载失败');
+                  console.error('Failed to load cloned audio');
                   setPlayingClonedAudio(false);
                 }}
               />
@@ -582,5 +582,3 @@ export const SegmentItem: React.FC<SegmentItemProps> = ({
     </div>
   );
 };
-
-
