@@ -794,40 +794,44 @@ async def regenerate_final_media(task_id: str):
 
 def _find_task_dir(task_id: str) -> Optional[str]:
     """查找任务目录"""
-    # 首先尝试从任务状态中获取（这是最可靠的方式）
+    # 1. 先从进程内任务状态中获取（处理中 / 刚完成的任务）
     try:
         from app.api.translation import tasks
         if task_id in tasks:
             task_dir = tasks[task_id].get("task_dir")
             if task_dir and os.path.exists(task_dir):
-                logger.info(f"从任务状态获取 task_dir: {task_dir}")
+                logger.info(f"从内存任务状态获取 task_dir: {task_dir}")
                 return task_dir
     except Exception as e:
-        logger.warning(f"从任务状态获取 task_dir 失败: {e}")
+        logger.warning(f"从内存任务状态获取 task_dir 失败: {e}")
 
-    # 如果任务状态中没有，尝试从文件系统中查找（回退方案）
+    # 2. 从持久化的任务状态 JSON 中读取 task_dir（历史任务的主要来源）
+    try:
+        task_states_dir = Path("data/task_states")
+        state_file = task_states_dir / f"{task_id}.json"
+        if state_file.exists():
+            with open(state_file, "r", encoding="utf-8") as f:
+                state = json.load(f)
+            task_dir = state.get("task_dir")
+            if task_dir and os.path.exists(task_dir):
+                logger.info(f"从持久化任务状态获取 task_dir: {task_dir}")
+                return task_dir
+    except Exception as e:
+        logger.warning(f"从持久化任务状态获取 task_dir 失败: {e}")
+
+    # 3. 最后尝试在 data/outputs 中按目录名包含 task_id 精确查找
     try:
         outputs_dir = Path("data/outputs")
         if outputs_dir.exists():
-            # 首先尝试精确匹配task_id
             for dir_path in outputs_dir.iterdir():
                 if dir_path.is_dir() and task_id in dir_path.name:
                     task_dir = str(dir_path)
-                    logger.info(f"从文件系统找到任务目录: {task_dir}")
+                    logger.info(f"从文件系统按 task_id 匹配到任务目录: {task_dir}")
                     return task_dir
-
-            # 如果找不到精确匹配，返回最新的任务目录（通常是用户当前编辑的）
-            task_dirs = [d for d in outputs_dir.iterdir() if d.is_dir()]
-            if task_dirs:
-                # 按修改时间排序，返回最新的
-                latest_dir = max(task_dirs, key=lambda d: d.stat().st_mtime)
-                task_dir = str(latest_dir)
-                logger.info(f"使用最新的任务目录作为回退: {task_dir}")
-                return task_dir
     except Exception as e:
-        logger.warning(f"从文件系统查找任务目录失败: {e}")
+        logger.warning(f"从文件系统按 task_id 匹配目录失败: {e}")
 
-    # 如果都找不到，返回 None
+    # 注意：不再回退到“最新目录”，避免任何未命中的任务都错误返回同一份数据
     logger.error(f"任务 {task_id} 的目录不存在")
     return None
 

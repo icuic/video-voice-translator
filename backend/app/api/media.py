@@ -219,53 +219,87 @@ async def get_media_metadata(file_id: str):
 @router.get("/result/{task_id}")
 async def get_result_media(task_id: str):
     """获取翻译结果视频/音频文件"""
-    # 导入 tasks（从 translation 模块）
     from app.api import translation
     tasks = translation.tasks
-    
-    # 首先尝试从任务字典中获取
-    final_video_path = None
-    task_dir = None
-    
+    TASK_STATES_DIR = Path("data/task_states")
+
+    final_video_path: Optional[Path] = None
+    status_is_completed = False
+
+    # 1. 先从内存任务字典中获取
     if task_id in tasks:
         task = tasks[task_id]
-        if task.get("status") != "completed":
-            raise HTTPException(status_code=400, detail="翻译任务尚未完成")
-        final_video_path = task.get("final_video_path")
-        task_dir = task.get("task_dir")
-    else:
-        # 任务不在字典中（可能因为后端重启），尝试从文件系统查找
-        import glob
-        outputs_dir = Path("data/outputs")
-        if outputs_dir.exists():
-            # 查找包含 09_translated 文件的目录（按时间倒序）
-            for dir_path in sorted(outputs_dir.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
-                if dir_path.is_dir():
-                    video_files = list(dir_path.glob("09_translated_*.mp4"))
+        status_is_completed = task.get("status") == "completed"
+        fvp = task.get("final_video_path")
+        if fvp:
+            candidate = Path(fvp)
+            if candidate.exists():
+                final_video_path = candidate
+        if final_video_path is None:
+            task_dir = task.get("task_dir")
+            if task_dir:
+                td = Path(task_dir)
+                if td.exists():
+                    video_files = sorted(td.glob("09_translated_*.mp4"))
                     if video_files:
-                        final_video_path = str(video_files[0])
-                        task_dir = str(dir_path)
-                        break
-    
-    if not final_video_path:
+                        final_video_path = video_files[0]
+    else:
+        # 2. 任务不在内存中：从持久化 task state JSON 精确读取
+        state_file = TASK_STATES_DIR / f"{task_id}.json"
+        if state_file.exists():
+            try:
+                with open(state_file, "r", encoding="utf-8") as f:
+                    state = json.load(f)
+                status_is_completed = state.get("status") == "completed"
+                fvp = state.get("final_video_path")
+                if fvp:
+                    candidate = Path(fvp)
+                    if candidate.exists():
+                        final_video_path = candidate
+                if final_video_path is None:
+                    task_dir = state.get("task_dir")
+                    if task_dir:
+                        td = Path(task_dir)
+                        if td.exists():
+                            video_files = sorted(td.glob("09_translated_*.mp4"))
+                            if video_files:
+                                final_video_path = video_files[0]
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"读取任务状态文件失败以解析结果视频: task_id={task_id}, err={e}")
+
+        # 3. 最后兜底：只在 outputs 目录名中包含 task_id 的目录里找 09_translated_*.mp4
+        if final_video_path is None:
+            outputs_dir = Path("data/outputs")
+            if outputs_dir.exists():
+                for dir_path in outputs_dir.iterdir():
+                    if dir_path.is_dir() and task_id in dir_path.name:
+                        video_files = sorted(dir_path.glob("09_translated_*.mp4"))
+                        if video_files:
+                            final_video_path = video_files[0]
+                            # 此时没有状态文件，不判定 completed 状态
+                            status_is_completed = True
+                            break
+
+    if final_video_path is None:
         raise HTTPException(status_code=404, detail="翻译结果文件不存在")
-    
-    final_video_path = Path(final_video_path)
     if not final_video_path.exists():
         raise HTTPException(status_code=404, detail=f"翻译结果文件不存在: {final_video_path}")
-    
-    # 确定媒体类型
+    if not status_is_completed:
+        raise HTTPException(status_code=400, detail="翻译任务尚未完成")
+
     ext = final_video_path.suffix.lower()
-    if ext in ['.mp4', '.avi', '.mov', '.mkv']:
-        media_type = "video/mp4"
-    elif ext in ['.wav', '.mp3', '.m4a']:
-        media_type = "audio/mpeg"
+    if ext in [".mp4", ".avi", ".mov", ".mkv", ".wmv", ".flv"]:
+        media_type = "video/mp4" if ext == ".mp4" else "video/x-matroska" if ext == ".mkv" else "video/mp4"
+    elif ext in [".wav", ".mp3", ".m4a", ".flac", ".aac", ".ogg"]:
+        media_type = "audio/mpeg" if ext in {".mp3", ".m4a", ".aac"} else "audio/wav" if ext == ".wav" else "audio/ogg"
     else:
         media_type = "application/octet-stream"
-    
+
     return FileResponse(
         path=final_video_path,
         media_type=media_type,
-        filename=final_video_path.name
+        filename=final_video_path.name,
     )
 
