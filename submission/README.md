@@ -1,37 +1,58 @@
-# Track 1 Submission Package
+# Video Voice Translator — Submission Snapshot
 
-This folder groups the main English submission materials for the 2026 AMD AI DevMaster Hackathon Track 1 entry: **Video Voice Translator**.
+This folder is a **local snapshot copy** of the materials submitted to the 2026 AMD AI DevMaster Hackathon, Track 1, for reference and offline reproducibility.
 
-## Included Documents
+The **authoritative submission** lives in the fork PR at:
 
-1. **Project README**
-   - Submission copy: [PROJECT_README.md](PROJECT_README.md)
-   - Root repository README: [../README.md](../README.md)
+- Fork repository: <https://github.com/icuic/Radeon-hackathon-2026-07>
+- Submission directory: `submissions/track1-video-voice-translator/`
+- Authoritative source repository: <https://github.com/icuic/video-voice-translator>
+- Submission branch: `amd-track1-video-voice-translator`
+- Evaluated commit: `5881233`
 
-2. **Submission Note**
-   - [SUBMISSION_NOTE.md](SUBMISSION_NOTE.md)
+## Files in This Snapshot
 
-3. **Project Profile**
-   - Source markdown: [PROJECT_PROFILE.md](PROJECT_PROFILE.md)
-   - PDF artifact: [track1-project-profile.pdf](track1-project-profile.pdf)
+| File | Purpose |
+|---|---|
+| `README.md` (this file) | Local snapshot index |
+| `PROJECT_PROFILE.md` | Editable markdown source for the Project Profile PDF |
+| `track1-project-profile.pdf` | Final PDF artifact (required) |
+| `track1-poster.svg` | Poster artifact (required, supplementary material) |
 
-4. **Supplementary Material**
-   - Poster: [track1-poster.svg](track1-poster.svg)
+> **Note:**
+> - The **bundled demo video** is not duplicated here to avoid large files in two places. Use either the PR-local artifact in the fork (`submissions/track1-video-voice-translator/demo.mp4`) or the canonical source copy: [data/demo/demo.mp4](../data/demo/demo.mp4).
+> - The **authoritative submission README** (with full checklist + reproduction steps + AMD/ROCm notes) is the one inside the fork PR: `submissions/track1-video-voice-translator/README.md`. The source repository's top-level [README.md](../README.md) contains the canonical install/run docs used by that submission README.
 
-5. **Demo Video**
-   - Bundled artifact (local repo): [../data/demo/demo.mp4](../data/demo/demo.mp4)
-   - Fork PR-local copy: `submissions/track1-video-voice-translator/demo.mp4` in icuic/Radeon-hackathon-2026-07
-   - Specs: 1920x1080 MP4, ~242 seconds (~4:02), ~16.4 MB, ~568 kbps average
+## Quick Links (Evaluated Commit `5881233`)
 
-## Suggested Review Order
+- Submission branch: <https://github.com/icuic/video-voice-translator/tree/amd-track1-video-voice-translator>
+- Source repo README: <https://github.com/icuic/video-voice-translator/blob/amd-track1-video-voice-translator/README.md>
+- Demo video mirror: <https://github.com/icuic/video-voice-translator/blob/amd-track1-video-voice-translator/data/demo/demo.mp4>
+- Install guide: [docs/INSTALL.md](../docs/INSTALL.md)
+- Usage guide: [docs/USAGE.md](../docs/USAGE.md)
+- Demo guide: [docs/DEMO.md](../docs/DEMO.md)
 
-1. Read [PROJECT_README.md](PROJECT_README.md)
-2. Open [SUBMISSION_NOTE.md](SUBMISSION_NOTE.md)
-3. Review [track1-project-profile.pdf](track1-project-profile.pdf)
-4. Open the poster [track1-poster.svg](track1-poster.svg)
-5. Watch the demo video [../data/demo/demo.mp4](../data/demo/demo.mp4)
+## Mandated Track 1 Artifacts
 
-## Notes
+All four mandated artifacts are delivered. The local-reproduction equivalents are:
 
-- `PROJECT_README.md` is the submission-folder copy of the canonical root `README.md`.
-- This folder is a submission-oriented index so reviewers can find the contest materials quickly.
+1. **Project Source Code** — this repository, branch `amd-track1-video-voice-translator`, commit `5881233`
+2. **Project Profile PDF** — `track1-project-profile.pdf` (with `PROJECT_PROFILE.md` as source)
+3. **Demo Video** — canonical copy at [data/demo/demo.mp4](../data/demo/demo.mp4); fork PR copy at `submissions/track1-video-voice-translator/demo.mp4`
+4. **Supplementary material (Poster)** — `track1-poster.svg`
+
+## Reproduction Shortcut
+
+```bash
+git clone https://github.com/icuic/video-voice-translator.git
+cd video-voice-translator
+git checkout amd-track1-video-voice-translator
+git reset --hard 5881233
+
+./install_all.sh
+# edit .env with a valid LLM endpoint + key, then:
+./service.sh up
+# open http://127.0.0.1:5173
+```
+
+The fork PR's submission README (the authoritative one, not this local snapshot) contains the full evaluator checklist and step-by-step review order.

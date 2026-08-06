@@ -134,15 +134,18 @@ Additional examples are available in [docs/USAGE.md](docs/USAGE.md).
 
 ## Submission Package
 
-All contest-oriented materials are grouped under [submission/](submission/README.md):
+All contest-oriented materials are grouped under [submission/](submission/README.md). To keep the review flow simple, the submission folder intentionally contains only **two markdown files** (`README.md` for the index, `PROJECT_PROFILE.md` as the editable PDF source).
 
-- Submission index: [submission/README.md](submission/README.md)
-- Submission note: [submission/SUBMISSION_NOTE.md](submission/SUBMISSION_NOTE.md)
-- Project profile source: [submission/PROJECT_PROFILE.md](submission/PROJECT_PROFILE.md)
-- Project profile PDF: [submission/track1-project-profile.pdf](submission/track1-project-profile.pdf)
-- Poster: [submission/track1-poster.svg](submission/track1-poster.svg)
-- Demo video (fork PR-local): `submissions/track1-video-voice-translator/demo.mp4`
-- Demo video (canonical mirror): [data/demo/demo.mp4](data/demo/demo.mp4)
+| Item | Path in this repo |
+|---|---|
+| Submission index + evaluator checklist | [submission/README.md](submission/README.md) |
+| Project profile (editable source) | [submission/PROJECT_PROFILE.md](submission/PROJECT_PROFILE.md) |
+| Project profile PDF (final artifact) | [submission/track1-project-profile.pdf](submission/track1-project-profile.pdf) |
+| Poster artifact | [submission/track1-poster.svg](submission/track1-poster.svg) |
+| Demo video — canonical mirror | [data/demo/demo.mp4](data/demo/demo.mp4) |
+| Demo video — fork PR-local copy | `submissions/track1-video-voice-translator/demo.mp4` in icuic/Radeon-hackathon-2026-07 |
+
+The **authoritative** submission README (with the full checklist, review order, and reproduction steps used by the evaluator PR) is the one in the fork PR at `submissions/track1-video-voice-translator/README.md`.
 
 ## Repository Guide
 
