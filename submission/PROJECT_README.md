@@ -129,14 +129,15 @@ Additional examples are available in [docs/USAGE.md](docs/USAGE.md).
 
 ## Submission Package
 
-All contest-oriented materials are grouped under [submission/](submission/README.md):
+All contest-oriented materials are grouped under the submission folder:
 
 - Submission index: [submission/README.md](submission/README.md)
 - Submission note: [submission/SUBMISSION_NOTE.md](submission/SUBMISSION_NOTE.md)
 - Project profile source: [submission/PROJECT_PROFILE.md](submission/PROJECT_PROFILE.md)
 - Project profile PDF: [submission/track1-project-profile.pdf](submission/track1-project-profile.pdf)
 - Poster: [submission/track1-poster.svg](submission/track1-poster.svg)
-- Demo video guide: [submission/DEMO_VIDEO.md](submission/DEMO_VIDEO.md)
+- Demo video (fork PR-local): `submissions/track1-video-voice-translator/demo.mp4`
+- Demo video (canonical mirror in this repo): [data/demo/demo.mp4](../data/demo/demo.mp4)
 
 ## Repository Guide
 

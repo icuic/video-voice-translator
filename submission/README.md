@@ -19,8 +19,9 @@ This folder groups the main English submission materials for the 2026 AMD AI Dev
    - Poster: [track1-poster.svg](track1-poster.svg)
 
 5. **Demo Video**
-   - Guide: [DEMO_VIDEO.md](DEMO_VIDEO.md)
-   - Video artifact: [../data/demo/demo.mp4](../data/demo/demo.mp4)
+   - Bundled artifact (local repo): [../data/demo/demo.mp4](../data/demo/demo.mp4)
+   - Fork PR-local copy: `submissions/track1-video-voice-translator/demo.mp4` in icuic/Radeon-hackathon-2026-07
+   - Specs: 1920x1080 MP4, ~242 seconds (~4:02), ~16.4 MB, ~568 kbps average
 
 ## Suggested Review Order
 
