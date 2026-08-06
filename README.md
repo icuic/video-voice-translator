@@ -6,8 +6,14 @@ This project is designed to run on AMD Radeon / ROCm environments while keeping 
 
 ## Demo Video
 
+A final competition recording is checked in at the canonical repository path used by the submission docs:
+
 - Demo artifact: [data/demo/demo.mp4](data/demo/demo.mp4)
-- Recommended review path: open the demo video first, then follow the reproduction steps in this document.
+- File summary: 1920x1080 MP4, ~242 seconds (~4:02), ~16.4 MB
+- Submission package copy: `submissions/track1-video-voice-translator/demo.mp4` in the fork repository
+- Demo video guide: [submission/DEMO_VIDEO.md](submission/DEMO_VIDEO.md)
+
+Recommended review path: open the demo video first, then follow the reproduction steps in this document.
 
 ## Key Capabilities
 
