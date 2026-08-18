@@ -12,7 +12,7 @@ echo "=========================================="
 echo "🚀 一键安装脚本"
 echo "=========================================="
 echo "将自动完成所有安装步骤，包括："
-echo "  - 系统依赖（FFmpeg、lsof、Node.js）"
+echo "  - 系统依赖（FFmpeg、lsof、Node.js、Supervisor）"
 echo "  - IndexTTS2 安装（包含模型文件下载，约 5.5GB）"
 echo "  - 主项目依赖安装"
 echo "  - 前端依赖安装"
@@ -59,6 +59,32 @@ if ! command -v node &> /dev/null; then
     echo "✅ Node.js 安装完成: $(node --version)"
 else
     echo "✅ Node.js 已安装: $(node --version)"
+fi
+
+# 检查并安装 Supervisor（服务进程管理器）
+if ! command -v supervisord &> /dev/null; then
+    echo "安装 Supervisor..."
+    # apt-get update 已在上面 FFmpeg/lsof 安装时执行过；如果没执行过则补一次
+    $SUDO_CMD apt-get update -qq
+    $SUDO_CMD apt-get install -y supervisor
+    echo "✅ Supervisor 安装完成: $(supervisord --version)"
+
+    # 停止并禁用系统全局的 supervisord 服务（避免使用 /etc/supervisor/conf.d 下的默认配置与我们项目冲突）
+    # 我们只用项目自带的 supervisor/supervisord.conf，通过 ./manage-supervisor.sh 管理
+    echo "禁用系统全局 supervisord 服务（避免冲突，使用项目自管配置）..."
+    $SUDO_CMD systemctl stop supervisor 2>/dev/null || true
+    $SUDO_CMD systemctl disable supervisor 2>/dev/null || true
+    echo "✅ 系统全局 supervisord 已停止并禁用"
+else
+    echo "✅ Supervisor 已安装: $(supervisord --version)"
+    # 即使 supervisor 已经装了，也确保系统全局服务没有占用默认端口/配置
+    # （但如果用户自己明确启用了全局 supervisor，也不强制关闭，只提示一下）
+    if systemctl is-active --quiet supervisor 2>/dev/null; then
+        echo "⚠️  系统全局 supervisor 服务正在运行（使用 /etc/supervisor/conf.d/ 下的配置）"
+        echo "   本项目使用独立配置（supervisor/supervisord.conf），通过 ./manage-supervisor.sh 管理"
+        echo "   如果系统全局 supervisor 没有被其他程序使用，建议手动关闭以免混淆："
+        echo "   sudo systemctl stop supervisor && sudo systemctl disable supervisor"
+    fi
 fi
 
 # 步骤2: 安装 IndexTTS2
@@ -198,7 +224,7 @@ if ! grep -q "DASHSCOPE_API_KEY" ~/.bashrc 2>/dev/null; then
         echo ""
         echo "   或者设置环境变量后重新运行此脚本："
         echo "   export DASHSCOPE_API_KEY='your-api-key-here'"
-        echo "   ./scripts/install/install_all.sh"
+        echo "   ./install_all.sh"
     fi
 else
     echo "✅ DASHSCOPE_API_KEY 已配置"
@@ -211,7 +237,8 @@ echo "🎉 安装完成！"
 echo "=========================================="
 echo ""
 echo "下一步可以："
-echo "1. 启动前后端分离模式: ./start.sh"
+echo "1. 启动前后端分离服务（推荐）: ./manage-supervisor.sh start"
+echo "   查看服务状态              : ./manage-supervisor.sh status"
 echo "   前端: http://localhost:5173"
 echo "   后端 API: http://localhost:8000"
 echo "   API 文档: http://localhost:8000/docs"

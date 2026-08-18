@@ -195,9 +195,10 @@ source ~/.bashrc
 
 安装完成后，您可以：
 
-- **使用前后端分离模式（推荐）**（需要 Node.js 和前端依赖）：
+- **使用前后端分离服务模式（推荐）**（基于 supervisord，崩溃自动重启）：
   ```bash
-  ./start.sh
+  ./manage-supervisor.sh start   # 启动所有服务
+  ./manage-supervisor.sh status  # 查看服务状态
   ```
   前端：`http://localhost:5173`，后端 API：`http://localhost:8000`
 

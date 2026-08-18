@@ -40,7 +40,7 @@
    ```bash
    # 安装 index-tts 依赖
    cd index-tts
-   uv sync --extra webui
+   uv sync
    
    # 激活虚拟环境并安装主项目依赖
    source .venv/bin/activate

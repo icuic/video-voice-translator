@@ -2,7 +2,7 @@
 # 
 # 说明：
 # 1. 本项目依赖 index-tts 子模块，使用 index-tts/.venv 虚拟环境
-# 2. 首先需要安装 index-tts 的依赖：cd index-tts && uv sync --extra webui
+# 2. 首先需要安装 index-tts 的依赖：cd index-tts && uv sync
 # 3. 然后在此虚拟环境中安装本项目额外依赖（推荐使用 uv）：
 #
 # 推荐方式（使用 uv，更快更可靠）：

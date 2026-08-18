@@ -16,15 +16,17 @@
 
 安装完成后，您可以：
 
-**方式一：前后端分离模式（推荐）**：
+**方式一：前后端分离服务模式（推荐，基于 supervisord）**：
 
 ```bash
-./start.sh
+./manage-supervisor.sh start
 ```
 
 - 前端界面：`http://localhost:5173`
 - 后端 API：`http://localhost:8000`
 - API 文档：`http://localhost:8000/docs`
+
+查看服务状态：`./manage-supervisor.sh status`
 
 **方式二：命令行方式**：
 
@@ -44,26 +46,55 @@
 
 ## 使用方法
 
-### 前后端分离模式（推荐）
+### 前后端分离服务模式（推荐，基于 supervisord）
 
-前后端分离模式提供了基于 React 的现代化 Web 界面，适合需要良好用户体验的场景。
+前后端分离模式提供了基于 React 的现代化 Web 界面，适合需要良好用户体验的场景。服务通过 **supervisord** 进行管理，具备：
+- 崩溃自动重启
+- 日志自动轮转
+- 独立控制前端/后端启停
+- 关闭终端后服务仍在后台运行
 
 #### 前置要求
 
 - Node.js v20 或更高版本（安装脚本会自动安装）
 - 前端依赖已安装（安装脚本会自动安装）
+- supervisord 已安装（一键安装脚本会自动安装）
 
-#### 启动服务
+#### 管理服务（最常用命令）
 
 ```bash
-./start.sh
+# 启动所有服务（后端 + 前端）
+./manage-supervisor.sh start
+
+# 查看服务状态、端口、日志路径
+./manage-supervisor.sh status
+
+# 重启所有服务
+./manage-supervisor.sh restart
+
+# 停止所有服务并退出 supervisord
+./manage-supervisor.sh stop
+
+# 实时查看后端日志
+./manage-supervisor.sh logs-backend
+
+# 实时查看前端日志
+./manage-supervisor.sh logs-frontend
 ```
 
-启动脚本会自动：
-- 检查并安装后端依赖（FastAPI、uvicorn 等）
-- 检查并安装前端依赖（如果 `node_modules` 不存在）
-- 启动后端服务（端口 8000）
-- 启动前端服务（端口 5173）
+更多命令（单服务启停、热加载配置、透传 supervisorctl 等）：
+```bash
+./manage-supervisor.sh help
+```
+
+#### 启动流程
+
+`./manage-supervisor.sh start` 会自动完成：
+1. 创建必要的数据目录（`data/run/`、`data/logs/supervisor/`）
+2. 导出环境变量（ENV_USER、ENV_PROJECT_ROOT）
+3. 启动 supervisord 守护进程
+4. supervisord 依次启动后端（`vvt-backend`，priority 90）和前端（`vvt-frontend`，priority 100）
+5. 服务默认在后台存活，即使关闭终端也不影响
 
 #### 访问服务
 
@@ -79,25 +110,26 @@
 - **处理进度实时显示**：实时显示处理进度和当前步骤
 - **结果预览和下载**：预览翻译结果并下载最终视频
 
-#### 单独启动服务
-
-如果需要单独启动后端或前端：
+#### 单独启动 / 停止单个服务
 
 ```bash
-# 仅启动后端
-./start_backend.sh
+# 仅重启后端（不会影响前端）
+./manage-supervisor.sh restart-backend
+
+# 仅停止前端
+./manage-supervisor.sh ctl stop vvt-frontend
 
 # 仅启动前端
-./start_frontend.sh
+./manage-supervisor.sh ctl start vvt-frontend
 ```
 
-#### 停止服务
+#### 修改配置后热加载（不停服务）
 
-在终端中按 `Ctrl+C` 停止所有服务，或使用：
-
+如果您修改了 `supervisor/supervisord.conf` 或 `supervisor/conf.d/*.ini`：
 ```bash
-pkill -f "uvicorn|vite"
+./manage-supervisor.sh reload
 ```
+这会重新读取配置并按需重启受影响的服务。
 
 #### API 使用
 

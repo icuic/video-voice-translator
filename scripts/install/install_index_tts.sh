@@ -38,6 +38,13 @@ fi
 
 cd "${PROJECT_ROOT}/index-tts"
 
+# 切换到指定的 commit（确保版本一致性）
+INDEX_TTS_PINNED_COMMIT="c7d3cff0ff8402c1d8e94b9848305d47e39f981c"
+echo ""
+echo "🔒 切换 IndexTTS2 到指定 commit: ${INDEX_TTS_PINNED_COMMIT}"
+git checkout "${INDEX_TTS_PINNED_COMMIT}"
+echo "✅ IndexTTS2 已切换到 commit: $(git rev-parse --short HEAD)"
+
 # 验证 pyproject.toml 是否存在
 if [ ! -f "pyproject.toml" ]; then
     echo "❌ 错误: 在 index-tts 目录中找不到 pyproject.toml 文件"

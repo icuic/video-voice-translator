@@ -128,9 +128,17 @@ video_voice_translator/
 ├── media_translation_cli.py      # 命令行入口
 ├── install_all.sh                # 一键安装脚本（推荐）
 ├── run_cli.sh                    # CLI 翻译启动脚本
-├── start.sh                      # 前后端分离启动脚本
+├── manage-supervisor.sh          # 服务管理脚本（基于 supervisord）
+├── supervisor/                   # supervisord 服务配置目录
+│   ├── supervisord.conf          # supervisord 主配置
+│   └── conf.d/                   # 服务进程配置
+│       ├── backend.ini
+│       └── frontend.ini
 ├── scripts/                      # 脚本目录
 │   ├── install/                  # 安装脚本
+│   ├── setup_env.sh              # 公共环境变量脚本
+│   ├── run_backend_foreground.sh # 后端前台启动脚本（supervisord 调用）
+│   ├── run_frontend_foreground.sh# 前端前台启动脚本（supervisord 调用）
 │   ├── batch_translate.sh        # 批量翻译脚本
 │   └── preload_models.sh         # 模型预加载脚本
 ├── tools/                        # 工具脚本目录
@@ -182,15 +190,27 @@ source ~/.bashrc
 
 ### 使用
 
-**方式一：前后端分离模式（推荐）**：
+**方式一：前后端分离服务模式（推荐，基于 supervisord 管理）**：
 
 ```bash
-./start.sh
+# 启动所有服务（后端 + 前端，崩溃自动重启）
+./manage-supervisor.sh start
+
+# 查看服务状态
+./manage-supervisor.sh status
+
+# 重启服务
+./manage-supervisor.sh restart
+
+# 停止所有服务并退出 supervisord
+./manage-supervisor.sh stop
 ```
 
 - 前端界面：`http://localhost:5173`
 - 后端 API：`http://localhost:8000`
 - API 文档：`http://localhost:8000/docs`
+
+更多服务管理命令（单服务启停、日志、热重载配置等）：`./manage-supervisor.sh help`
 
 **方式二：命令行方式**：
 

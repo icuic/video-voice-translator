@@ -42,7 +42,8 @@ if python -c "import whisper; import scipy; import httpx; import pydub; print('�
     echo "✅ 主项目额外依赖: 已安装（使用国内源）"
     echo ""
     echo "下一步可以："
-    echo "1. 启动前后端分离模式: ./start.sh"
+    echo "1. 启动前后端分离服务（推荐）: ./manage-supervisor.sh start"
+    echo "   查看服务状态              : ./manage-supervisor.sh status"
     echo "2. 使用命令行: ./run_cli.sh input.mp4 --source-lang en --target-lang zh"
 else
     echo "⚠️  部分依赖可能未正确安装，请检查"
