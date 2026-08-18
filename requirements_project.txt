@@ -43,8 +43,7 @@ scipy>=1.10.0
 # 必须放在这里以确保安装主项目依赖时不会升级 numpy
 numpy==1.26.2
 
-# Web UI（如果需要更新版本，index-tts 已包含 gradio==5.45.0）
-# gradio>=4.0.0  # 已在 index-tts optional-dependencies.webui 中
+# HTTP 客户端（前后端分离 API 调用）
 httpx>=0.24.0
 
 # 音频处理增强

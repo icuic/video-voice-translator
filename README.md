@@ -64,7 +64,7 @@ Video Voice Translator 是一个基于人工智能技术的多语言音视频翻
 - **注意**：当前说话人分离效果有限，建议使用 `--single-speaker` 选项跳过此步骤以获得更好的处理效果
 
 ### 系统特性
-- Web UI 界面：基于 Gradio 的可视化操作界面
+- Web UI 界面：基于 React 的前后端分离架构
 - 命令行工具：支持批处理和自动化脚本
 - 模型预加载：启动时预加载模型，提升处理速度
 - GPU 加速支持：关键模块支持 CUDA 加速
@@ -118,17 +118,17 @@ video_voice_translator/
 │   ├── speaker_diarizer.py       # 说话人分离器
 │   ├── model_preloader.py        # 模型预加载器
 │   └── ...                       # 其他工具模块
+├── frontend/                     # React 前端项目
 ├── index-tts/                    # IndexTTS2 音色克隆子模块
 ├── data/                         # 数据目录
 │   ├── outputs/                  # 输出文件目录
 │   ├── temp/                     # 临时文件目录
 │   └── logs/                     # 日志文件目录
 ├── docs/                         # 文档目录
-├── media_translation_webui.py    # Web UI 入口
 ├── media_translation_cli.py      # 命令行入口
 ├── install_all.sh                # 一键安装脚本（推荐）
-├── run_webui.sh                  # Web UI 启动脚本
 ├── run_cli.sh                    # CLI 翻译启动脚本
+├── start.sh                      # 前后端分离启动脚本
 ├── scripts/                      # 脚本目录
 │   ├── install/                  # 安装脚本
 │   ├── batch_translate.sh        # 批量翻译脚本
@@ -182,15 +182,7 @@ source ~/.bashrc
 
 ### 使用
 
-**方式一：Gradio Web UI**（推荐新手）：
-
-```bash
-./run_webui.sh
-```
-
-启动后访问 `http://localhost:7861`
-
-**方式二：前后端分离模式**：
+**方式一：前后端分离模式（推荐）**：
 
 ```bash
 ./start.sh
@@ -200,7 +192,7 @@ source ~/.bashrc
 - 后端 API：`http://localhost:8000`
 - API 文档：`http://localhost:8000/docs`
 
-**方式三：命令行方式**：
+**方式二：命令行方式**：
 
 ```bash
 # 自动检测语言并翻译

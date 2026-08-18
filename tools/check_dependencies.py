@@ -27,7 +27,6 @@ INDEX_TTS_DEPENDENCIES = {
     "transformers": "transformers",
     "librosa": "librosa",
     "numpy": "numpy",
-    "gradio": "gradio",
     "indextts": "indextts",  # index-tts 包本身
 }
 
@@ -88,7 +87,7 @@ def check_all_dependencies():
             print("index-tts 核心依赖:")
             for pkg, error in index_tts_missing:
                 print(f"  - {pkg}")
-                print(f"    安装命令: cd index-tts && uv sync --extra webui")
+                print(f"    安装命令: cd index-tts && uv sync")
         
         if project_missing:
             print("\n主项目额外依赖:")
@@ -97,7 +96,6 @@ def check_all_dependencies():
             
             print(f"\n安装命令: uv pip install -r requirements_project.txt")
             print("或使用便捷脚本: ./scripts/install/install_with_uv.sh")
-            print("或使用启动脚本自动安装: ./run_webui.sh")
         
         return 1
 

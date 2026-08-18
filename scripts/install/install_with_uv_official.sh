@@ -32,7 +32,7 @@ cd index-tts
 source .venv/bin/activate
 cd ..
 
-if python -c "import gradio; import whisper; import scipy; import httpx; import pydub; print('✅ 所有依赖验证通过')" 2>&1; then
+if python -c "import whisper; import scipy; import httpx; import pydub; print('✅ 所有依赖验证通过')" 2>&1; then
     echo ""
     echo "=========================================="
     echo "🎉 安装完成！"
@@ -42,7 +42,7 @@ if python -c "import gradio; import whisper; import scipy; import httpx; import 
     echo "✅ 主项目额外依赖: 已安装（使用国内源）"
     echo ""
     echo "下一步可以："
-    echo "1. 启动 Web UI: ./run_webui.sh"
+    echo "1. 启动前后端分离模式: ./start.sh"
     echo "2. 使用命令行: ./run_cli.sh input.mp4 --source-lang en --target-lang zh"
 else
     echo "⚠️  部分依赖可能未正确安装，请检查"

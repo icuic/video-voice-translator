@@ -9,7 +9,7 @@ INDEX_TTS_DIR="${PROJECT_ROOT}/index-tts"
 # 检查虚拟环境是否存在
 if [ ! -d "${INDEX_TTS_DIR}/.venv" ]; then
     echo "❌ 虚拟环境不存在，请先安装 index-tts 依赖"
-    echo "   运行: cd index-tts && uv sync --extra webui"
+    echo "   运行: cd index-tts && uv sync"
     exit 1
 fi
 
@@ -17,7 +17,7 @@ fi
 cd "${INDEX_TTS_DIR}"
 source .venv/bin/activate
 
-# 设置环境变量（参考 run_webui.sh）
+# 设置环境变量
 # 优先使用已存在的环境变量，否则从 ~/.bashrc 读取
 if [ -z "$DASHSCOPE_API_KEY" ] && [ -f ~/.bashrc ]; then
     # 支持单引号和双引号两种格式

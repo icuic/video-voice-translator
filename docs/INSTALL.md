@@ -195,13 +195,7 @@ source ~/.bashrc
 
 安装完成后，您可以：
 
-- **使用 Gradio Web UI**（推荐新手）：
-  ```bash
-  ./run_webui.sh
-  ```
-  访问 `http://localhost:7861`
-
-- **使用前后端分离模式**（需要 Node.js 和前端依赖）：
+- **使用前后端分离模式（推荐）**（需要 Node.js 和前端依赖）：
   ```bash
   ./start.sh
   ```
