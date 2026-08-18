@@ -1,26 +1,37 @@
 #!/bin/bash
-# 使用 uv 安装主项目额外依赖（推荐方式）
+# 使用 uv 安装主项目额外依赖（通用版本: 不强制镜像，以环境变量 UV_DEFAULT_INDEX 为准）
+# 说明:
+#   UV_HTTP_TIMEOUT (默认 120s)       uv 请求超时
+#   UV_DEFAULT_INDEX (默认 PyPI 官方)  不建议配置; 需要国内镜像请用 install_with_uv_china.sh
 
 set -e
+set -o pipefail
 
-# 获取脚本所在目录的绝对路径，然后回到项目根目录
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "${PROJECT_ROOT}"
 
+export UV_HTTP_TIMEOUT="${UV_HTTP_TIMEOUT:-120}"
+
 echo "=========================================="
 echo "📦 使用 uv 安装主项目额外依赖"
 echo "=========================================="
+echo "UV_HTTP_TIMEOUT=${UV_HTTP_TIMEOUT}s"
+if [[ -n "${UV_DEFAULT_INDEX}" ]]; then
+    echo "PyPI index (环境变量): ${UV_DEFAULT_INDEX}"
+    PIP_INDEX_ARGS="--index-url ${UV_DEFAULT_INDEX}"
+else
+    echo "PyPI index: default"
+    PIP_INDEX_ARGS=""
+fi
 echo "优势：更快、更可靠、与 index-tts 管理方式一致"
 echo ""
 
-# 进入 index-tts 目录（uv 需要知道虚拟环境位置）
 cd index-tts
 
-# 使用 uv pip install 在现有虚拟环境中安装依赖
-# uv pip install 会自动使用当前项目的虚拟环境
 echo "使用 uv pip install 安装依赖..."
-uv pip install -r ../requirements_project.txt
+# shellcheck disable=SC2086
+uv pip install -r ../requirements_project.txt ${PIP_INDEX_ARGS}
 
 cd ..
 

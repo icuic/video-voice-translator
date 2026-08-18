@@ -53,6 +53,7 @@ resampy>=0.4.2  # 音频重采样库（librosa 等库的依赖）
 
 # 文本翻译（DashScope API）
 openai>=1.0.0  # 用于调用阿里云 DashScope API（Qwen 模型）
+python-dotenv>=1.0.0  # 读取项目根目录 .env 中的密钥/镜像配置（DASHSCOPE_API_KEY 等）
 
 # 构建工具
 ninja>=1.10.0  # 用于编译 C++ 扩展（IndexTTS2 CUDA kernel 需要）

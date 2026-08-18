@@ -1,253 +1,385 @@
 #!/bin/bash
-# 一键安装脚本 - 自动完成所有安装步骤
+# 一键安装脚本 - 全程无交互，所有用户配置从项目根目录的 .env 文件读取。
+#
+# 前置步骤（必做）:
+#   cp .env.example .env
+#   # 然后编辑 .env，至少填写 DASHSCOPE_API_KEY，MIRROR_MODE 推荐填 tencent-intranet（腾讯云 ECS）
+#
+# 用法:
+#   ./install_all.sh                        # 读取 .env 里的 MIRROR_MODE（没有则默认 auto）
+#   ./install_all.sh --mirror tencent       # CLI 覆盖 .env 的镜像模式
+#   ./install_all.sh -h                     # 帮助
 
 set -e
+set -o pipefail
 
-# 获取脚本所在目录的绝对路径（脚本在项目根目录）
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${SCRIPT_DIR}"
 cd "${PROJECT_ROOT}"
 
+# ============================================================
+# A. 加载 .env（优先级最低，CLI 和 进程 env 覆盖）
+# ============================================================
+# shellcheck source=scripts/load_dotenv.sh
+source "${PROJECT_ROOT}/scripts/load_dotenv.sh"
+
+# ============================================================
+# B. 帮助 & 参数解析（CLI 优先级最高）
+# ============================================================
+show_help() {
+    cat <<'EOF'
+用法: ./install_all.sh [选项]
+
+[ 前置 ] 先填写项目根目录的 .env（cp .env.example .env）
+  必填: DASHSCOPE_API_KEY
+  推荐: MIRROR_MODE  (腾讯云 ECS 填 tencent-intranet)
+
+选项:
+  --mirror <tencent-intranet|tencent|china|official|auto>
+        tencent-intranet  腾讯云 ECS 内网源 ✨ 推荐（不走公网流量）
+        tencent           腾讯云公网镜像
+        china             阿里云 + 清华镜像（国内通用）
+        official          PyPI / NPM / HF 官方源（海外服务器）
+        auto              默认: 依次探测 tencent-intranet -> tencent -> china -> official
+  -h, --help
+        显示本帮助
+
+示例:
+  ./install_all.sh
+  ./install_all.sh --mirror tencent-intranet
+  ./install_all.sh --mirror official
+EOF
+}
+
+# CLI 参数优先覆盖 .env 里的 MIRROR_MODE
+MIRROR_MODE_CLI=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --mirror)
+            [[ $# -lt 2 ]] && { echo "❌ --mirror 需要参数"; exit 1; }
+            MIRROR_MODE_CLI="$2"
+            shift 2
+            ;;
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        *)
+            echo "❌ 未知参数: $1"
+            show_help
+            exit 1
+            ;;
+    esac
+done
+
+MIRROR_MODE="${MIRROR_MODE_CLI:-${MIRROR_MODE:-auto}}"
+case "${MIRROR_MODE}" in
+    tencent-intranet|tencent|china|official|auto) ;;
+    *)
+        echo "❌ 非法 --mirror=${MIRROR_MODE}；可取值: tencent-intranet | tencent | china | official | auto"
+        exit 1
+        ;;
+esac
+
+# ============================================================
+# C. 全局超时
+# ============================================================
+export CURL_ARGS="--connect-timeout 10 --max-time 120 --retry 3 --retry-delay 2 --retry-all-errors --fail --silent --show-error --location"
+export GIT_HTTP_LOW_SPEED_LIMIT=1000
+export GIT_HTTP_LOW_SPEED_TIME=30
+export UV_HTTP_TIMEOUT="${UV_HTTP_TIMEOUT:-120}"
+export NPM_CONFIG_FETCH_TIMEOUT=120000
+
+# ============================================================
+# D. 预设 5 组镜像（允许用户在 .env 里直接覆盖 UV_DEFAULT_INDEX / NPM_REGISTRY / NODE_SETUP_URL / HF_ENDPOINT）
+# ============================================================
+# 1) 腾讯云 ECS 内网 (免公网流量，仅腾讯云同地域 ECS 可解析 mirrors.tencentyun.com)
+#    npm 内网腾讯没镜像，回退到公网 mirrors.cloud.tencent.com/npm
+GROUP_TENCENT_INTRANET_PYPI="http://mirrors.tencentyun.com/pypi/simple"
+GROUP_TENCENT_INTRANET_NPM="https://mirrors.cloud.tencent.com/npm/"
+GROUP_TENCENT_INTRANET_HF="https://hf-mirror.com"
+GROUP_TENCENT_INTRANET_NODE="https://mirrors.tuna.tsinghua.edu.cn/nodesource/setup_20.x"
+
+# 2) 腾讯云公网
+GROUP_TENCENT_PYPI="https://mirrors.cloud.tencent.com/pypi/simple"
+GROUP_TENCENT_NPM="https://mirrors.cloud.tencent.com/npm/"
+GROUP_TENCENT_HF="https://hf-mirror.com"
+GROUP_TENCENT_NODE="https://mirrors.tuna.tsinghua.edu.cn/nodesource/setup_20.x"
+
+# 3) 国内通用（阿里云 + 清华 Nodesource）
+GROUP_CHINA_PYPI="https://mirrors.aliyun.com/pypi/simple"
+GROUP_CHINA_NPM="https://registry.npmmirror.com"
+GROUP_CHINA_HF="https://hf-mirror.com"
+GROUP_CHINA_NODE="https://mirrors.tuna.tsinghua.edu.cn/nodesource/setup_20.x"
+
+# 4) 官方
+GROUP_OFFICIAL_PYPI="https://pypi.org/simple"
+GROUP_OFFICIAL_NPM="https://registry.npmjs.org"
+GROUP_OFFICIAL_HF="https://huggingface.co"
+GROUP_OFFICIAL_NODE="https://deb.nodesource.com/setup_20.x"
+
+# ============================================================
+# E. 探测函数
+# ============================================================
+ping_url() {
+    local url="$1" t
+    t=$(curl --connect-timeout 5 --max-time 8 -s -o /dev/null -w "%{time_total}" "${url}" 2>/dev/null || true)
+    if [[ -n "${t}" && "${t}" != "0" ]]; then
+        awk -v v="${t}" 'BEGIN{ printf "%d\n", v*1000 }'
+    else
+        echo ""
+    fi
+}
+
+pick_fastest_of_two() {
+    local name="$1" a_ms="$2" a_url="$3" b_ms="$4" b_url="$5" ms url n
+    if [[ -n "${a_ms}" && -n "${b_ms}" ]]; then
+        if (( a_ms <= b_ms )); then ms="${a_ms}"; url="${a_url}"; n="A"; else ms="${b_ms}"; url="${b_url}"; n="B"; fi
+    elif [[ -n "${a_ms}" ]]; then ms="${a_ms}"; url="${a_url}"; n="A"
+    elif [[ -n "${b_ms}" ]]; then ms="${b_ms}"; url="${b_url}"; n="B"
+    else ms=""; url="${a_url}"; n="A"; echo "    ⚠️  ${name}: 都探测失败，兜底 A"; fi
+    if [[ -n "${ms}" ]]; then echo "    ✅ ${name}: ${n} (${ms}ms) ${url}"; fi
+    echo "${url}"
+}
+
+# ============================================================
+# F. 决定镜像组
+# ============================================================
 echo "=========================================="
-echo "🚀 一键安装脚本"
+echo "🚀 Video Voice Translator - 一键安装（无交互）"
 echo "=========================================="
-echo "将自动完成所有安装步骤，包括："
-echo "  - 系统依赖（FFmpeg、lsof、Node.js、Supervisor）"
-echo "  - IndexTTS2 安装（包含模型文件下载，约 5.5GB）"
-echo "  - 主项目依赖安装"
-echo "  - 前端依赖安装"
-echo "  - 环境变量配置"
-echo "=========================================="
+echo "  .env 文件: ${PROJECT_ROOT}/.env $([[ -f "${PROJECT_ROOT}/.env" ]] && echo ✅ 已加载 || echo ⚠️  未提供（先 cp .env.example .env）)"
+[[ -z "${DASHSCOPE_API_KEY}" ]] && echo "  ⚠️  DASHSCOPE_API_KEY 未设置（翻译功能运行时需要；.env 里填好再 manage-supervisor restart 即可）"
+echo "  镜像模式: ${MIRROR_MODE}"
 echo ""
 
-# 检查是否为 root 用户
-if [ "$EUID" -eq 0 ]; then
-    SUDO_CMD=""
+echo "🔎  解析最终镜像..."
+apply_group() {
+    local pypi="$1" npmr="$2" hf="$3" node="$4"
+    UV_DEFAULT_INDEX="${UV_DEFAULT_INDEX:-${pypi}}"
+    NPM_REGISTRY="${NPM_REGISTRY:-${npmr}}"
+    HF_ENDPOINT="${HF_ENDPOINT:-${hf}}"
+    NODE_SETUP_URL="${NODE_SETUP_URL:-${node}}"
+}
+
+if [[ "${MIRROR_MODE}" == "tencent-intranet" ]]; then
+    echo "  使用预设: tencent-intranet"
+    apply_group "${GROUP_TENCENT_INTRANET_PYPI}" "${GROUP_TENCENT_INTRANET_NPM}" "${GROUP_TENCENT_INTRANET_HF}" "${GROUP_TENCENT_INTRANET_NODE}"
+elif [[ "${MIRROR_MODE}" == "tencent" ]]; then
+    echo "  使用预设: tencent"
+    apply_group "${GROUP_TENCENT_PYPI}" "${GROUP_TENCENT_NPM}" "${GROUP_TENCENT_HF}" "${GROUP_TENCENT_NODE}"
+elif [[ "${MIRROR_MODE}" == "china" ]]; then
+    echo "  使用预设: china"
+    apply_group "${GROUP_CHINA_PYPI}" "${GROUP_CHINA_NPM}" "${GROUP_CHINA_HF}" "${GROUP_CHINA_NODE}"
+elif [[ "${MIRROR_MODE}" == "official" ]]; then
+    echo "  使用预设: official"
+    apply_group "${GROUP_OFFICIAL_PYPI}" "${GROUP_OFFICIAL_NPM}" "${GROUP_OFFICIAL_HF}" "${GROUP_OFFICIAL_NODE}"
 else
-    SUDO_CMD="sudo"
+    # auto: 探测 4 组，每组 ping 各自的 PyPI；然后取最快的组
+    echo "  auto 模式: 探测 PyPI + NodeSetup + HF + NPM 综合最快组..."
+    for g in TENCENT_INTRANET TENCENT CHINA OFFICIAL; do
+        pypi_var="GROUP_${g}_PYPI"; npm_var="GROUP_${g}_NPM"; hf_var="GROUP_${g}_HF"; node_var="GROUP_${g}_NODE"
+        t1=$(ping_url "${!pypi_var}")
+        t2=$(ping_url "${!npm_var}")
+        t3=$(ping_url "${!hf_var}")
+        t4=$(ping_url "${!node_var}")
+        sum=0; n=0
+        for v in "${t1}" "${t2}" "${t3}" "${t4}"; do [[ -n "${v}" ]] && { sum=$((sum+v)); n=$((n+1)); }; done
+        if (( n > 0 )); then
+            avg=$(( sum / n ))
+        else
+            avg=999999
+        fi
+        declare "SCORE_${g}=${avg}"
+        declare "COUNT_${g}=${n}"
+        echo "    组 ${g}: 可达 ${n}/4 → 平均 ${avg}ms"
+    done
+    # 找可达最多的组；并列选平均最小
+    best="" best_avg=999999 best_n=-1
+    for g in TENCENT_INTRANET TENCENT CHINA OFFICIAL; do
+        count_ref="COUNT_${g}"; score_ref="SCORE_${g}"
+        n="${!count_ref}"; s="${!score_ref}"
+        if (( n > best_n )) || { (( n == best_n )) && (( s < best_avg )); }; then
+            best_n="${n}"; best_avg="${s}"; best="${g}"
+        fi
+    done
+    echo "  🏁 auto 选择: ${best} (可达 ${best_n}/4，平均 ${best_avg}ms)"
+    pypi_var="GROUP_${best}_PYPI"; npm_var="GROUP_${best}_NPM"; hf_var="GROUP_${best}_HF"; node_var="GROUP_${best}_NODE"
+    apply_group "${!pypi_var}" "${!npm_var}" "${!hf_var}" "${!node_var}"
 fi
 
-# 步骤1: 安装系统依赖
+# 汇总确认
+echo ""
+echo "🎯 最终使用:"
+echo "   UV_DEFAULT_INDEX = ${UV_DEFAULT_INDEX}"
+echo "   NPM_REGISTRY     = ${NPM_REGISTRY}"
+echo "   HF_ENDPOINT      = ${HF_ENDPOINT}"
+echo "   NODE_SETUP_URL   = ${NODE_SETUP_URL}"
+echo ""
+[[ -z "${DASHSCOPE_API_KEY}" ]] && echo "⚠️  运行时必填 DASHSCOPE_API_KEY 未设置（.env 填好后 ./manage-supervisor restart 即可生效）"
+
+# 导出
+export EFFECTIVE_MIRROR="${MIRROR_MODE}"
+export UV_DEFAULT_INDEX NPM_REGISTRY HF_ENDPOINT NODE_SETUP_URL UV_HTTP_TIMEOUT NPM_CONFIG_FETCH_TIMEOUT CURL_ARGS GIT_HTTP_LOW_SPEED_LIMIT GIT_HTTP_LOW_SPEED_TIME
+
+# sudo
+if [ "$EUID" -eq 0 ]; then SUDO_CMD=""; else SUDO_CMD="sudo"; fi
+
+# ============================================================
+# 步骤1: 系统依赖 (FFmpeg / lsof / Node.js / Supervisor)
+# ============================================================
+echo ""
 echo "=========================================="
-echo "📦 步骤 1/7: 安装系统依赖"
+echo "📦 步骤 1/6: 安装系统依赖"
 echo "=========================================="
 
-# 检查 FFmpeg
-if ! command -v ffmpeg &> /dev/null; then
+if ! command -v ffmpeg &>/dev/null; then
     echo "安装 FFmpeg..."
-    $SUDO_CMD apt-get update
+    $SUDO_CMD apt-get update -qq
     $SUDO_CMD apt-get install -y ffmpeg
-    echo "✅ FFmpeg 安装完成"
-else
-    echo "✅ FFmpeg 已安装: $(ffmpeg -version | head -1)"
 fi
+echo "✅ FFmpeg: $(ffmpeg -version 2>/dev/null | head -1 || echo OK)"
 
-# 检查 lsof
-if ! command -v lsof &> /dev/null; then
+if ! command -v lsof &>/dev/null; then
     echo "安装 lsof..."
     $SUDO_CMD apt-get install -y lsof
-    echo "✅ lsof 安装完成"
-else
-    echo "✅ lsof 已安装"
 fi
+echo "✅ lsof: OK"
 
-# 检查并安装 Node.js
-if ! command -v node &> /dev/null; then
-    echo "安装 Node.js..."
-    curl -fsSL https://deb.nodesource.com/setup_20.x | $SUDO_CMD bash -
-    $SUDO_CMD apt-get install -y nodejs
-    echo "✅ Node.js 安装完成: $(node --version)"
-else
-    echo "✅ Node.js 已安装: $(node --version)"
-fi
-
-# 检查并安装 Supervisor（服务进程管理器）
-if ! command -v supervisord &> /dev/null; then
-    echo "安装 Supervisor..."
-    # apt-get update 已在上面 FFmpeg/lsof 安装时执行过；如果没执行过则补一次
-    $SUDO_CMD apt-get update -qq
-    $SUDO_CMD apt-get install -y supervisor
-    echo "✅ Supervisor 安装完成: $(supervisord --version)"
-
-    # 停止并禁用系统全局的 supervisord 服务（避免使用 /etc/supervisor/conf.d 下的默认配置与我们项目冲突）
-    # 我们只用项目自带的 supervisor/supervisord.conf，通过 ./manage-supervisor.sh 管理
-    echo "禁用系统全局 supervisord 服务（避免冲突，使用项目自管配置）..."
-    $SUDO_CMD systemctl stop supervisor 2>/dev/null || true
-    $SUDO_CMD systemctl disable supervisor 2>/dev/null || true
-    echo "✅ 系统全局 supervisord 已停止并禁用"
-else
-    echo "✅ Supervisor 已安装: $(supervisord --version)"
-    # 即使 supervisor 已经装了，也确保系统全局服务没有占用默认端口/配置
-    # （但如果用户自己明确启用了全局 supervisor，也不强制关闭，只提示一下）
-    if systemctl is-active --quiet supervisor 2>/dev/null; then
-        echo "⚠️  系统全局 supervisor 服务正在运行（使用 /etc/supervisor/conf.d/ 下的配置）"
-        echo "   本项目使用独立配置（supervisor/supervisord.conf），通过 ./manage-supervisor.sh 管理"
-        echo "   如果系统全局 supervisor 没有被其他程序使用，建议手动关闭以免混淆："
-        echo "   sudo systemctl stop supervisor && sudo systemctl disable supervisor"
+if ! command -v node &>/dev/null; then
+    echo "安装 Node.js 20.x (${NODE_SETUP_URL})..."
+    TMP_NODE_SETUP="$(mktemp)"
+    if curl ${CURL_ARGS} -o "${TMP_NODE_SETUP}" "${NODE_SETUP_URL}"; then
+        $SUDO_CMD bash "${TMP_NODE_SETUP}"
+        $SUDO_CMD apt-get install -y nodejs
+        rm -f "${TMP_NODE_SETUP}"
+    else
+        rm -f "${TMP_NODE_SETUP}"
+        echo "❌ Node.js setup 脚本下载超时。可手动安装或切换 --mirror official"
+        exit 1
     fi
 fi
+echo "✅ Node.js: $(node --version 2>/dev/null || echo OK)"
 
-# 步骤2: 安装 IndexTTS2
+if ! command -v supervisord &>/dev/null; then
+    echo "安装 supervisor..."
+    $SUDO_CMD apt-get update -qq
+    $SUDO_CMD apt-get install -y supervisor
+    echo "禁用系统全局 supervisord（避免冲突）"
+    $SUDO_CMD systemctl stop supervisor 2>/dev/null || true
+    $SUDO_CMD systemctl disable supervisor 2>/dev/null || true
+else
+    if systemctl is-active --quiet supervisor 2>/dev/null; then
+        echo "⚠️  系统全局 supervisor 正在运行；本项目使用 ./manage-supervisor.sh 管理"
+    fi
+fi
+echo "✅ supervisor: $(supervisord --version 2>/dev/null || echo OK)"
+
+# ============================================================
+# 步骤2: IndexTTS2
+# ============================================================
 echo ""
 echo "=========================================="
-echo "📦 步骤 2/7: 安装 IndexTTS2"
+echo "📦 步骤 2/6: 安装 IndexTTS2（含模型下载，~5.5GB）"
 echo "=========================================="
-
-if [ ! -f "${PROJECT_ROOT}/scripts/install/install_index_tts.sh" ]; then
-    echo "❌ 找不到 install_index_tts.sh 脚本"
-    exit 1
-fi
-
 bash "${PROJECT_ROOT}/scripts/install/install_index_tts.sh"
 
+# ============================================================
 # 步骤3: 检查 PyTorch
+# ============================================================
 echo ""
 echo "=========================================="
-echo "🔍 步骤 3/7: 检查 PyTorch"
+echo "🔍 步骤 3/6: 检查 PyTorch"
 echo "=========================================="
-
 if [ -f "${PROJECT_ROOT}/index-tts/.venv/bin/activate" ]; then
     cd "${PROJECT_ROOT}/index-tts"
     source .venv/bin/activate
-    
-    if python -c "import torch; print(f'✅ PyTorch 已安装: {torch.__version__}'); print(f'   CUDA 可用: {torch.cuda.is_available()}')" 2>/dev/null; then
-        python -c "import torch; print(f'✅ PyTorch 已安装: {torch.__version__}'); print(f'   CUDA 可用: {torch.cuda.is_available()}')"
+    if python -c "import torch; print(f'✅ PyTorch {torch.__version__} | CUDA={torch.cuda.is_available()}')" 2>/dev/null; then
+        :
     else
-        echo "⚠️  PyTorch 未安装或无法导入"
-        echo "   这可能是正常的，IndexTTS2 依赖安装时会自动安装 PyTorch"
+        echo "⚠️  PyTorch 暂不可用，依赖安装阶段会再次尝试"
     fi
-    
     cd "${PROJECT_ROOT}"
 else
-    echo "⚠️  虚拟环境不存在，跳过 PyTorch 检查"
+    echo "⚠️  index-tts 虚拟环境未创建，跳过"
 fi
 
-# 步骤4: 安装主项目依赖
+# ============================================================
+# 步骤4: 主项目 Python 依赖
+# ============================================================
 echo ""
 echo "=========================================="
-echo "📦 步骤 4/7: 安装主项目依赖"
+echo "📦 步骤 4/6: 安装主项目额外依赖"
 echo "=========================================="
+case "${MIRROR_MODE}" in
+    tencent*|china)
+        INSTALL_UV_SCRIPT="${PROJECT_ROOT}/scripts/install/install_with_uv_china.sh"
+        # 注：china 脚本优先用环境变量 UV_DEFAULT_INDEX，所以 tencent-intranet 也能用
+        ;;
+    *)
+        INSTALL_UV_SCRIPT="${PROJECT_ROOT}/scripts/install/install_with_uv_official.sh"
+        ;;
+esac
+echo "使用: ${INSTALL_UV_SCRIPT}"
+[ -f "${INSTALL_UV_SCRIPT}" ] || { echo "❌ 找不到脚本"; exit 1; }
+bash "${INSTALL_UV_SCRIPT}"
 
-if [ ! -f "${PROJECT_ROOT}/scripts/install/install_with_uv_china.sh" ]; then
-    echo "❌ 找不到 install_with_uv_china.sh 脚本"
-    exit 1
-fi
-
-bash "${PROJECT_ROOT}/scripts/install/install_with_uv_china.sh"
-
-# 步骤5: 安装前端依赖
+# ============================================================
+# 步骤5: 前端依赖
+# ============================================================
 echo ""
 echo "=========================================="
-echo "📦 步骤 5/7: 安装前端依赖"
+echo "📦 步骤 5/6: 安装前端依赖 (npm)"
 echo "=========================================="
-
-if ! command -v npm &> /dev/null; then
-    echo "❌ 错误: npm 未找到，但 Node.js 应该已安装"
-    echo "   请检查 Node.js 安装是否正确"
-    exit 1
-fi
-
+command -v npm &>/dev/null || { echo "❌ npm 未安装"; exit 1; }
+[ -d "${PROJECT_ROOT}/frontend" ] || { echo "❌ frontend 目录缺失"; exit 1; }
 cd "${PROJECT_ROOT}/frontend"
+NPM_ARGS="--fetch-timeout=120000 --no-audit --no-fund --registry=${NPM_REGISTRY}"
 if [ ! -d "node_modules" ]; then
-    echo "安装前端依赖..."
-    npm install
-    echo "✅ 前端依赖安装完成"
+    echo "npm install (registry=${NPM_REGISTRY})"
+    # shellcheck disable=SC2086
+    npm install ${NPM_ARGS}
 else
-    echo "✅ 前端依赖已安装"
+    echo "✅ 已存在 frontend/node_modules；如需重装请删除该目录后重跑"
 fi
 cd "${PROJECT_ROOT}"
 
-# 最终验证
+# ============================================================
+# 步骤6: 最终验证 + 完成
+# ============================================================
 echo ""
 echo "=========================================="
-echo "🔍 最终验证"
+echo "✅ 步骤 6/6: 最终验证"
 echo "=========================================="
-
 cd "${PROJECT_ROOT}/index-tts"
 source .venv/bin/activate
 cd "${PROJECT_ROOT}"
 
-# 验证依赖
 if python tools/check_dependencies.py 2>/dev/null; then
-    echo "✅ 所有依赖验证通过"
+    echo "✅ check_dependencies.py 通过"
 else
-    echo "⚠️  部分依赖验证失败，请检查"
+    echo "⚠️  check_dependencies.py 部分不通过"
 fi
-
-# 验证 IndexTTS2
-if python -c "from indextts.infer_v2 import IndexTTS2; print('✅ IndexTTS2 可以正常导入')" 2>/dev/null; then
-    echo "✅ IndexTTS2 可以正常导入"
-else
-    echo "⚠️  IndexTTS2 导入失败（可能是模型文件未下载）"
-fi
-
-# 验证模型文件
+python -c "from indextts.infer_v2 import IndexTTS2; print('✅ IndexTTS2 导入 OK')" 2>/dev/null || echo "⚠️  IndexTTS2 导入未就绪（模型未下载完成？）"
 if [ -f "${PROJECT_ROOT}/index-tts/checkpoints/gpt.pth" ] && [ -f "${PROJECT_ROOT}/index-tts/checkpoints/s2mel.pth" ]; then
-    echo "✅ 模型文件已下载"
+    echo "✅ 模型文件已就绪"
 else
-    echo "⚠️  模型文件未找到，音色克隆功能将无法使用"
+    echo "⚠️  模型文件缺失；重跑 install_all.sh 或手动用 modelscope/hf download 下载"
 fi
+[[ -n "${DASHSCOPE_API_KEY}" ]] && echo "✅ DASHSCOPE_API_KEY 已设置（来自 .env）" || echo "⚠️  DASHSCOPE_API_KEY 未设置（填 .env 后 ./manage-supervisor restart 生效）"
 
-# 步骤6: 配置环境变量
 echo ""
 echo "=========================================="
-echo "⚙️  步骤 6/7: 配置环境变量"
+echo "🎉 安装完成"
 echo "=========================================="
-
-# 注意：HF_ENDPOINT 已在 install_index_tts.sh 中配置（模型下载时）
-echo "✅ HF_ENDPOINT 已在 IndexTTS2 安装时配置"
-
-# 配置 DASHSCOPE_API_KEY
-if ! grep -q "DASHSCOPE_API_KEY" ~/.bashrc 2>/dev/null; then
-    echo ""
-    echo "⚠️  DASHSCOPE_API_KEY 未配置"
-    echo "   翻译功能需要此配置"
-    echo ""
-    
-    # 检查是否在交互式终端中
-    if [ -t 0 ]; then
-        echo "请输入您的 DASHSCOPE_API_KEY（留空跳过，稍后手动配置）："
-        read -r DASHSCOPE_API_KEY
-        
-        if [ -n "$DASHSCOPE_API_KEY" ]; then
-            echo "export DASHSCOPE_API_KEY='${DASHSCOPE_API_KEY}'" >> ~/.bashrc
-            echo "✅ DASHSCOPE_API_KEY 已配置到 ~/.bashrc"
-            echo "   请运行 'source ~/.bashrc' 或重新打开终端使配置生效"
-        else
-            echo "⚠️  已跳过配置，请稍后手动在 ~/.bashrc 中添加："
-            echo "   export DASHSCOPE_API_KEY='your-api-key-here'"
-        fi
-    else
-        # 非交互式环境，只显示提示
-        echo "   请在 ~/.bashrc 中添加："
-        echo "   export DASHSCOPE_API_KEY='your-api-key-here'"
-        echo ""
-        echo "   或者设置环境变量后重新运行此脚本："
-        echo "   export DASHSCOPE_API_KEY='your-api-key-here'"
-        echo "   ./install_all.sh"
-    fi
-else
-    echo "✅ DASHSCOPE_API_KEY 已配置"
-fi
-
-# 步骤7: 安装完成提示
+echo "  镜像组        : ${MIRROR_MODE}"
+echo "  HF_ENDPOINT   : ${HF_ENDPOINT}"
+echo "  PyPI index    : ${UV_DEFAULT_INDEX}"
+echo "  NPM registry  : ${NPM_REGISTRY}"
 echo ""
-echo "=========================================="
-echo "🎉 安装完成！"
-echo "=========================================="
-echo ""
-echo "下一步可以："
-echo "1. 启动前后端分离服务（推荐）: ./manage-supervisor.sh start"
-echo "   查看服务状态              : ./manage-supervisor.sh status"
-echo "   前端: http://localhost:5173"
-echo "   后端 API: http://localhost:8000"
-echo "   API 文档: http://localhost:8000/docs"
-echo ""
-echo "2. 使用命令行: ./run_cli.sh input.mp4"
-echo ""
-echo "如果遇到问题，请查看："
-echo "- 安装文档: docs/INSTALL.md"
-echo "- 使用指南: docs/USAGE.md"
-echo "- IndexTTS2 官方文档: https://github.com/index-tts/index-tts"
-echo ""
-
+echo "启动服务 (推荐): ./manage-supervisor.sh start"
+echo "服务状态       : ./manage-supervisor.sh status"
+echo "  前端: http://<server-ip>:5173"
+echo "  API : http://<server-ip>:8000/docs"
+echo "命令行运行     : ./run_cli.sh input.mp4"
+echo "修改配置生效   : ./manage-supervisor.sh restart"

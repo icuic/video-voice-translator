@@ -5,9 +5,30 @@
 
 import os
 # 修复protobuf兼容性问题：必须在导入任何模块之前设置环境变量
-# 这可以解决protobuf版本过新（>3.20.x）导致的兼容性问题
 if "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION" not in os.environ:
     os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
+
+# 加载项目根目录 .env（HF_ENDPOINT / DASHSCOPE_API_KEY 等）。
+# 必须在本文件内任何使用 os.environ 读取变量之前调用。
+try:
+    from .dotenv_loader import load_project_env  # type: ignore
+    load_project_env()
+except Exception:
+    try:
+        from dotenv import load_dotenv  # type: ignore
+        load_dotenv()
+    except Exception:
+        pass
+
+# 对 HF_ENDPOINT / HF_HOME 提供默认值（仅在未设置时赋值）
+# 这样既尊重 .env / 进程环境变量，又不会因为配置缺失而崩溃。
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+_HF_HOME_DEFAULT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "index-tts", ".cache", "hf")
+)
+os.environ.setdefault("HF_HOME", _HF_HOME_DEFAULT)
+os.environ.setdefault("PYTHONUNBUFFERED", "1")
+os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
 
 import logging
 import json
@@ -696,16 +717,17 @@ class VoiceCloner:
             venv_python = os.path.join(index_tts_dir, ".venv", "bin", "python")
             
             # 构建Python代码
+            # 注意: 子进程从父进程的 env 继承 HF_ENDPOINT / HF_HOME / DASHSCOPE_API_KEY，
+            #       这里不硬编码覆盖，保持与 .env 一致。
             python_code = f"""
 import os
 import sys
 os.chdir('{index_tts_dir}')
 
-# 设置环境变量
-os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
-os.environ['HF_HOME'] = '{index_tts_dir}/.cache/hf'
-os.environ['PYTHONUNBUFFERED'] = '1'
-os.environ['PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION'] = 'python'  # 修复protobuf兼容性问题
+# 环境变量: 从父进程 os.environ 继承而来，只设置兜底
+os.environ.setdefault('HF_HOME', '{index_tts_dir}/.cache/hf')
+os.environ.setdefault('PYTHONUNBUFFERED', '1')
+os.environ.setdefault('PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION', 'python')
 
 # 导入IndexTTS2
 from indextts.infer_v2 import IndexTTS2
@@ -740,10 +762,9 @@ tts.infer(
                 cwd=index_tts_dir,
                 env={
                     **os.environ,
-                    'HF_ENDPOINT': 'https://hf-mirror.com',
                     'HF_HOME': f'{index_tts_dir}/.cache/hf',
                     'PYTHONUNBUFFERED': '1',
-                    'PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION': 'python'  # 修复protobuf兼容性问题
+                    'PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION': 'python'
                 }
             )
             
@@ -773,8 +794,8 @@ tts.infer(
                 venv_python, "-c",
                 f"""
 import os
-# 修复protobuf兼容性问题
-os.environ['PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION'] = 'python'
+# 修复protobuf兼容性问题（从父进程继承也生效，这里只做兜底）
+os.environ.setdefault('PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION', 'python')
 os.chdir('{index_tts_dir}')
 from indextts.infer_v2 import IndexTTS2
 tts = IndexTTS2(cfg_path="checkpoints/config.yaml", model_dir="checkpoints", use_fp16=True, use_cuda_kernel=True, use_deepspeed=False)
@@ -782,12 +803,11 @@ tts.infer(spk_audio_prompt='{reference_audio}', text='{text}', output_path='{out
 """
             ]
             
-            # 设置环境变量
+            # 设置环境变量: 从父进程 os.environ 继承 HF_ENDPOINT / DASHSCOPE_API_KEY / .env
             env = os.environ.copy()
-            env['HF_ENDPOINT'] = "https://hf-mirror.com"
             env['HF_HOME'] = os.path.join(index_tts_dir, ".cache", "hf")
             env['PYTHONUNBUFFERED'] = "1"
-            env['PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION'] = "python"  # 修复protobuf兼容性问题
+            env['PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION'] = env.get('PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION', "python")
             
             # 执行命令
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=env, cwd=index_tts_dir)

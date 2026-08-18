@@ -162,29 +162,44 @@ video_voice_translator/
 
 **推荐方式：一键安装**
 
-使用一键安装脚本自动完成所有安装步骤（包括系统依赖、IndexTTS2、主项目依赖、模型下载等）：
+使用一键安装脚本自动完成所有安装步骤（包括系统依赖、IndexTTS2、主项目依赖、模型下载等）。
+**运行前请先准备 `.env`**（必填 `DASHSCOPE_API_KEY`，腾讯云 ECS 推荐 `MIRROR_MODE=tencent-intranet`）：
 
 ```bash
-./install_all.sh
+cp .env.example .env
+# 编辑 .env，填写 DASHSCOPE_API_KEY，选择合适的 MIRROR_MODE
+
+./install_all.sh                   # 默认使用 .env 中的 MIRROR_MODE
+./install_all.sh --mirror tencent  # 或用 CLI 覆盖镜像源
+./install_all.sh -h                # 查看全部可用镜像组
 ```
-
-**手动安装**
-
-如果您希望手动控制安装过程，请参考：[安装指南](docs/INSTALL.md)
 
 详细安装步骤请参考：[安装指南](docs/INSTALL.md)
 
 ### 环境变量配置
 
-本项目需要使用阿里云 DashScope（Qwen）API 进行文本翻译，需要配置 API 密钥：
+本项目的所有用户配置（API 密钥 / 镜像源 / HF 镜像）都存放在项目根目录的 `.env` 文件中，**不再写入 `~/.bashrc` 或 `~/.zshrc`**。
 
 ```bash
-# Linux/macOS - 添加到 ~/.bashrc 或 ~/.zshrc
-echo 'export DASHSCOPE_API_KEY="your-api-key-here"' >> ~/.bashrc
-source ~/.bashrc
+cp .env.example .env
+# 编辑 .env
+# 必填:
+#   DASHSCOPE_API_KEY=sk-xxxxxxxxxxxxxxxx          # 文本翻译必需
+# 推荐 (腾讯云 ECS):
+#   MIRROR_MODE=tencent-intranet                   # 内网源，不走公网流量
+# 可选 (通常无需改):
+#   HF_ENDPOINT=https://hf-mirror.com
+#   UV_DEFAULT_INDEX=http://mirrors.tencentyun.com/pypi/simple
+#   NPM_REGISTRY=https://mirrors.cloud.tencent.com/npm/
 ```
 
-**获取 API 密钥**：访问 [阿里云 DashScope 控制台](https://dashscope.console.aliyun.com/)
+获取 API 密钥：访问 [阿里云 DashScope 控制台](https://dashscope.console.aliyun.com/)
+
+修改 `.env` 后让服务生效：
+
+```bash
+./manage-supervisor.sh restart
+```
 
 详细配置说明请参考：[安装指南](docs/INSTALL.md)
 

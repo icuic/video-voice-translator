@@ -208,7 +208,7 @@
 
 #### 手动方式（需要先激活虚拟环境）
 
-如果直接使用 `python media_translation_cli.py`，需要先手动激活虚拟环境并设置环境变量：
+如果直接使用 `python media_translation_cli.py`，需要先手动激活虚拟环境；`.env` 中的变量也会被自动加载（前提是安装了 `python-dotenv`：
 
 ```bash
 # 1. 激活虚拟环境
@@ -216,10 +216,9 @@ cd index-tts
 source .venv/bin/activate
 cd ..
 
-# 2. 设置环境变量
-export HF_ENDPOINT="https://hf-mirror.com"
-export HF_HOME="${PWD}/index-tts/.cache/hf"
-export PYTHONUNBUFFERED=1
+# 2. 设置环境变量（也可不设；如果你在 .env 里填了 HF_ENDPOINT/DASHSCOPE_API_KEY 等，会被自动加载
+#    没装 python-dotenv 才手动设一下
+pip install -q python-dotenv
 
 # 3. 运行翻译命令
 python media_translation_cli.py input.mp4 --source-lang en --target-lang zh

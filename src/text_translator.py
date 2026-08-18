@@ -12,6 +12,19 @@ from .utils import validate_file_path, create_output_dir, safe_filename
 from .output_manager import OutputManager, StepNumbers
 
 
+# 加载 .env（DASHSCOPE_API_KEY / HF_ENDPOINT 等）
+# 必须在 os.getenv("DASHSCOPE_API_KEY") 之前调用。
+try:
+    from .dotenv_loader import load_project_env  # type: ignore
+    load_project_env()
+except Exception:
+    try:
+        from dotenv import load_dotenv  # type: ignore
+        load_dotenv()
+    except Exception:
+        pass
+
+
 class TextTranslator:
     """文本翻译器类"""
     

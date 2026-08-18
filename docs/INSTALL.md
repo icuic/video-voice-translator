@@ -164,32 +164,55 @@ npm install
 cd ..
 ```
 
-### 五、环境变量配置
+### 五、环境变量配置（.env 文件）
 
-### DASHSCOPE_API_KEY 配置（翻译功能必需）
+本项目的所有用户配置（API 密钥 / 镜像源 / HuggingFace 镜像）统一存放在项目根目录的 **`.env` 文件** 中，**不再写入 `~/.bashrc` 或 `~/.zshrc`**。安装脚本和运行时都会自动加载它。
 
-本项目使用阿里云 DashScope（Qwen）API 进行文本翻译，需要配置 API 密钥。
+> 编辑 `.env` 后立即生效，无需重新登录 shell。
+> 对正在运行的服务：执行 `./manage-supervisor.sh restart` 即可重新加载配置。
 
-**获取 API 密钥**：
-
-1. 访问 [阿里云 DashScope 控制台](https://dashscope.console.aliyun.com/)
-2. 注册/登录账号
-3. 创建 API 密钥
-4. 复制 API 密钥
-
-**配置方式**：
-
-在 `~/.bashrc` 文件中添加：
+#### `.env` 文件生成
 
 ```bash
-export DASHSCOPE_API_KEY='your-api-key-here'
+cd /path/to/video-voice-translator
+cp .env.example .env
 ```
 
-然后重新加载配置：
+#### 必填项
 
-```bash
-source ~/.bashrc
+| 变量 | 说明 | 示例 |
+|------|------|------|
+| `DASHSCOPE_API_KEY` | 阿里云 DashScope API Key，文本翻译必需（Qwen 系列模型） | `sk-xxxxxxxxxxxxxxxx` |
+
+获取地址：<https://dashscope.console.aliyun.com/apiKey>
+
+#### 腾讯云 ECS 部署推荐（必看）
+
+腾讯云同地域 ECS 可以直接使用内网镜像，**不走公网流量，速度最快**。将 `.env` 中设置为：
+
 ```
+MIRROR_MODE=tencent-intranet
+```
+
+#### 完整镜像模式可选值（.env 中 `MIRROR_MODE`，或 CLI `--mirror`）
+
+| 值 | 场景 | 说明 |
+|----|------|------|
+| `tencent-intranet` | ✨ **腾讯云 ECS 同地域部署** | PyPI：`mirrors.tencentyun.com`（内网，免流）；NPM：腾讯公云 npm 镜像；HF：`hf-mirror.com` |
+| `tencent` | 腾讯云公网（或其他使用腾讯云镜像的机器） | PyPI：`mirrors.cloud.tencent.com/pypi`；NPM：腾讯 npm；HF：`hf-mirror.com` |
+| `china` | 国内通用（阿里云 + 清华 Nodesource） | PyPI：阿里云；NPM：npmmirror；HF：`hf-mirror.com` |
+| `official` | 海外服务器 / 本地开发机可直连国际网 | 全部走 PyPI / NPM / HF / NodeSource 官方 |
+| `auto` | **默认** | 脚本分别探测 4 组源的综合平均延迟，选择综合最快的 |
+
+#### 可选高级覆盖（一般不用填）
+
+| 变量 | 作用 |
+|------|------|
+| `UV_DEFAULT_INDEX` | 强制指定 PyPI 源，会覆盖 `MIRROR_MODE` 的预设 |
+| `NPM_REGISTRY` | 强制指定 NPM registry |
+| `NODE_SETUP_URL` | 强制指定 Node.js setup_20.x 脚本下载地址 |
+| `HF_ENDPOINT` | 强制指定 HuggingFace 镜像 |
+| `UV_HTTP_TIMEOUT` | 下载超时（秒），默认 120 |
 
 ## 下一步
 
