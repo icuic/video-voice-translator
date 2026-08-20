@@ -84,7 +84,11 @@ esac
 # ============================================================
 # C. 全局超时
 # ============================================================
-export CURL_ARGS="--connect-timeout 10 --max-time 120 --retry 3 --retry-delay 2 --retry-all-errors --fail --silent --show-error --location"
+CURL_RETRY_ALL_ERRORS=""
+if curl --help all 2>/dev/null | grep -q -- "--retry-all-errors"; then
+    CURL_RETRY_ALL_ERRORS="--retry-all-errors"
+fi
+export CURL_ARGS="--connect-timeout 10 --max-time 120 --retry 3 --retry-delay 2 ${CURL_RETRY_ALL_ERRORS} --fail --silent --show-error --location"
 export GIT_HTTP_LOW_SPEED_LIMIT=1000
 export GIT_HTTP_LOW_SPEED_TIME=30
 export UV_HTTP_TIMEOUT="${UV_HTTP_TIMEOUT:-120}"
@@ -95,22 +99,23 @@ export NPM_CONFIG_FETCH_TIMEOUT=120000
 # ============================================================
 # 1) 腾讯云 ECS 内网 (免公网流量，仅腾讯云同地域 ECS 可解析 mirrors.tencentyun.com)
 #    npm 内网腾讯没镜像，回退到公网 mirrors.cloud.tencent.com/npm
+#    HF：默认直连官方（hf-mirror 对部分仓库 308 回源反而不稳；如需镜像，在 .env 里显式写 HF_ENDPOINT=https://hf-mirror.com）
 GROUP_TENCENT_INTRANET_PYPI="http://mirrors.tencentyun.com/pypi/simple"
 GROUP_TENCENT_INTRANET_NPM="https://mirrors.cloud.tencent.com/npm/"
-GROUP_TENCENT_INTRANET_HF="https://hf-mirror.com"
-GROUP_TENCENT_INTRANET_NODE="https://mirrors.tuna.tsinghua.edu.cn/nodesource/setup_20.x"
+GROUP_TENCENT_INTRANET_HF=""
+GROUP_TENCENT_INTRANET_NODE="https://deb.nodesource.com/setup_20.x"
 
 # 2) 腾讯云公网
 GROUP_TENCENT_PYPI="https://mirrors.cloud.tencent.com/pypi/simple"
 GROUP_TENCENT_NPM="https://mirrors.cloud.tencent.com/npm/"
-GROUP_TENCENT_HF="https://hf-mirror.com"
-GROUP_TENCENT_NODE="https://mirrors.tuna.tsinghua.edu.cn/nodesource/setup_20.x"
+GROUP_TENCENT_HF=""
+GROUP_TENCENT_NODE="https://deb.nodesource.com/setup_20.x"
 
-# 3) 国内通用（阿里云 + 清华 Nodesource）
+# 3) 国内通用（阿里云 + 官方 Nodesource）
 GROUP_CHINA_PYPI="https://mirrors.aliyun.com/pypi/simple"
 GROUP_CHINA_NPM="https://registry.npmmirror.com"
-GROUP_CHINA_HF="https://hf-mirror.com"
-GROUP_CHINA_NODE="https://mirrors.tuna.tsinghua.edu.cn/nodesource/setup_20.x"
+GROUP_CHINA_HF=""
+GROUP_CHINA_NODE="https://deb.nodesource.com/setup_20.x"
 
 # 4) 官方
 GROUP_OFFICIAL_PYPI="https://pypi.org/simple"
@@ -158,7 +163,12 @@ apply_group() {
     local pypi="$1" npmr="$2" hf="$3" node="$4"
     UV_DEFAULT_INDEX="${UV_DEFAULT_INDEX:-${pypi}}"
     NPM_REGISTRY="${NPM_REGISTRY:-${npmr}}"
-    HF_ENDPOINT="${HF_ENDPOINT:-${hf}}"
+    if [ -z "${HF_ENDPOINT:-}" ] && [ -n "${hf}" ]; then
+        HF_ENDPOINT="${hf}"
+    elif [ -z "${HF_ENDPOINT:-}" ] && [ -z "${hf}" ]; then
+        # 预设里故意留空 → 直连官方 huggingface.co（比部分仓库 308 回源的镜像更稳）
+        unset HF_ENDPOINT
+    fi
     NODE_SETUP_URL="${NODE_SETUP_URL:-${node}}"
 }
 
@@ -213,7 +223,7 @@ echo ""
 echo "🎯 最终使用:"
 echo "   UV_DEFAULT_INDEX = ${UV_DEFAULT_INDEX}"
 echo "   NPM_REGISTRY     = ${NPM_REGISTRY}"
-echo "   HF_ENDPOINT      = ${HF_ENDPOINT}"
+echo "   HF_ENDPOINT      = ${HF_ENDPOINT:-（直连官方 https://huggingface.co）}"
 echo "   NODE_SETUP_URL   = ${NODE_SETUP_URL}"
 echo ""
 [[ -z "${DASHSCOPE_API_KEY}" ]] && echo "⚠️  运行时必填 DASHSCOPE_API_KEY 未设置（.env 填好后 ./manage-supervisor restart 即可生效）"
@@ -230,7 +240,7 @@ if [ "$EUID" -eq 0 ]; then SUDO_CMD=""; else SUDO_CMD="sudo"; fi
 # ============================================================
 echo ""
 echo "=========================================="
-echo "📦 步骤 1/6: 安装系统依赖"
+echo "📦 步骤 1/8: 安装系统依赖"
 echo "=========================================="
 
 if ! command -v ffmpeg &>/dev/null; then
@@ -280,7 +290,7 @@ echo "✅ supervisor: $(supervisord --version 2>/dev/null || echo OK)"
 # ============================================================
 echo ""
 echo "=========================================="
-echo "📦 步骤 2/6: 安装 IndexTTS2（含模型下载，~5.5GB）"
+echo "📦 步骤 2/8: 安装 IndexTTS2（含模型下载，~5.5GB）"
 echo "=========================================="
 bash "${PROJECT_ROOT}/scripts/install/install_index_tts.sh"
 
@@ -289,7 +299,7 @@ bash "${PROJECT_ROOT}/scripts/install/install_index_tts.sh"
 # ============================================================
 echo ""
 echo "=========================================="
-echo "🔍 步骤 3/6: 检查 PyTorch"
+echo "🔍 步骤 3/8: 检查 PyTorch"
 echo "=========================================="
 if [ -f "${PROJECT_ROOT}/index-tts/.venv/bin/activate" ]; then
     cd "${PROJECT_ROOT}/index-tts"
@@ -309,7 +319,7 @@ fi
 # ============================================================
 echo ""
 echo "=========================================="
-echo "📦 步骤 4/6: 安装主项目额外依赖"
+echo "📦 步骤 4/8: 安装主项目额外依赖"
 echo "=========================================="
 case "${MIRROR_MODE}" in
     tencent*|china)
@@ -329,7 +339,7 @@ bash "${INSTALL_UV_SCRIPT}"
 # ============================================================
 echo ""
 echo "=========================================="
-echo "📦 步骤 5/6: 安装前端依赖 (npm)"
+echo "📦 步骤 5/8: 安装前端依赖 (npm)"
 echo "=========================================="
 command -v npm &>/dev/null || { echo "❌ npm 未安装"; exit 1; }
 [ -d "${PROJECT_ROOT}/frontend" ] || { echo "❌ frontend 目录缺失"; exit 1; }
@@ -349,7 +359,7 @@ cd "${PROJECT_ROOT}"
 # ============================================================
 echo ""
 echo "=========================================="
-echo "✅ 步骤 6/6: 最终验证"
+echo "✅ 步骤 6/8: 最终验证"
 echo "=========================================="
 cd "${PROJECT_ROOT}/index-tts"
 source .venv/bin/activate
@@ -368,18 +378,137 @@ else
 fi
 [[ -n "${DASHSCOPE_API_KEY}" ]] && echo "✅ DASHSCOPE_API_KEY 已设置（来自 .env）" || echo "⚠️  DASHSCOPE_API_KEY 未设置（填 .env 后 ./manage-supervisor restart 生效）"
 
+# ============================================================
+# 步骤7: 预下载运行时模型（把 faster-whisper-medium、Demucs、pyannote、speechbrain、resemblyzer 等拉到本地 cache）
+# ============================================================
 echo ""
 echo "=========================================="
-echo "🎉 安装完成"
+echo "📦 步骤 7/8: 预下载运行时模型（推荐，首次翻译不用等）"
+echo "=========================================="
+PRELOAD_SUCCESS=0
+if [ -x "${PROJECT_ROOT}/scripts/preload_models.sh" ]; then
+    cd "${PROJECT_ROOT}"
+    echo "执行 ./scripts/preload_models.sh（预计 5~15 分钟，失败不影响后续流程，首次翻译会再自动下载）..."
+    set +e
+    bash "${PROJECT_ROOT}/scripts/preload_models.sh"
+    PRELOAD_RC=$?
+    set -e
+    if [ ${PRELOAD_RC} -eq 0 ]; then
+        PRELOAD_SUCCESS=1
+        echo "✅ 模型预加载完成"
+    else
+        echo "⚠️  模型预加载返回码 ${PRELOAD_RC}，跳过（首次翻译时会再自动联网下载）"
+    fi
+else
+    echo "ℹ️  未找到 preload_models.sh，跳过"
+fi
+
+# ============================================================
+# 步骤8: 自动启动服务
+# ============================================================
+echo ""
+echo "=========================================="
+echo "🚀 步骤 8/8: 自动启动服务"
+echo "=========================================="
+
+AUTO_START_SUCCESS=0
+if [ -x "${PROJECT_ROOT}/manage-supervisor.sh" ]; then
+    cd "${PROJECT_ROOT}"
+    if ./manage-supervisor.sh status &>/dev/null; then
+        echo "ℹ️  supervisord 已在运行，执行 restart 以加载最新配置"
+        ./manage-supervisor.sh restart || AUTO_START_SUCCESS=0
+    else
+        echo "执行 ./manage-supervisor.sh start ..."
+        ./manage-supervisor.sh start || AUTO_START_SUCCESS=0
+    fi
+
+    echo ""
+    echo "⏳ 等待服务启动（前端需编译，后端需加载模型，最长 120s）..."
+    MAX_WAIT=120
+    WAITED=0
+    BACKEND_OK=0
+    FRONTEND_OK=0
+    while [ $WAITED -lt $MAX_WAIT ]; do
+        if [ $BACKEND_OK -eq 0 ] && command -v curl &>/dev/null; then
+            if curl -sSf --max-time 3 http://127.0.0.1:8000/docs &>/dev/null; then
+                BACKEND_OK=1
+                echo "✅ 后端 API 已就绪 (http://127.0.0.1:8000/docs)"
+            fi
+        fi
+        if [ $FRONTEND_OK -eq 0 ] && command -v curl &>/dev/null; then
+            if curl -sSf --max-time 3 http://127.0.0.1:5173/ &>/dev/null; then
+                FRONTEND_OK=1
+                echo "✅ 前端 UI 已就绪 (http://127.0.0.1:5173)"
+            fi
+        fi
+        if [ $BACKEND_OK -eq 1 ] && [ $FRONTEND_OK -eq 1 ]; then
+            AUTO_START_SUCCESS=1
+            break
+        fi
+        sleep 5
+        WAITED=$((WAITED + 5))
+        printf "."
+    done
+    [ $WAITED -gt 0 ] && echo ""
+
+    echo ""
+    echo "📊 服务状态："
+    cd "${PROJECT_ROOT}" && ./manage-supervisor.sh status || true
+
+    if [ $BACKEND_OK -eq 0 ]; then
+        echo "⚠️  后端 API 仍未就绪（首次加载模型较慢），可稍后用 ./manage-supervisor.sh status 查看"
+        echo "   后端日志：./manage-supervisor.sh logs-backend"
+    fi
+    if [ $FRONTEND_OK -eq 0 ]; then
+        echo "⚠️  前端 UI 仍未就绪，可稍后访问 http://127.0.0.1:5173 查看"
+        echo "   前端日志：./manage-supervisor.sh logs-frontend"
+    fi
+else
+    echo "⚠️  manage-supervisor.sh 不存在或不可执行，跳过自动启动"
+fi
+
+# 收集用于展示的 IP 信息（尽力而为，失败不影响）
+PUBLIC_IP=""
+PRIVATE_IP=""
+if command -v curl &>/dev/null; then
+    PUBLIC_IP=$(curl -s --max-time 3 ifconfig.me 2>/dev/null || curl -s --max-time 3 ipinfo.io/ip 2>/dev/null || echo "")
+fi
+PRIVATE_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "")
+
+echo ""
+echo "=========================================="
+echo "🎉 全部完成"
 echo "=========================================="
 echo "  镜像组        : ${MIRROR_MODE}"
-echo "  HF_ENDPOINT   : ${HF_ENDPOINT}"
+echo "  HF_ENDPOINT   : ${HF_ENDPOINT:-（直连官方 https://huggingface.co）}"
 echo "  PyPI index    : ${UV_DEFAULT_INDEX}"
 echo "  NPM registry  : ${NPM_REGISTRY}"
+if [ "${PRELOAD_SUCCESS:-0}" -eq 1 ]; then
+    echo "  模型预加载    : ✅ 运行时模型已预下载到本地 cache"
+else
+    echo "  模型预加载    : ⚠️  未完成；首次翻译时会自动联网下载（约 3~8GB）"
+fi
+if [ $AUTO_START_SUCCESS -eq 1 ]; then
+    echo "  服务状态      : ✅ 已自动启动"
+else
+    echo "  服务状态      : ⚠️  需手动检查状态 (./manage-supervisor.sh status)"
+fi
 echo ""
-echo "启动服务 (推荐): ./manage-supervisor.sh start"
-echo "服务状态       : ./manage-supervisor.sh status"
-echo "  前端: http://<server-ip>:5173"
-echo "  API : http://<server-ip>:8000/docs"
-echo "命令行运行     : ./run_cli.sh input.mp4"
-echo "修改配置生效   : ./manage-supervisor.sh restart"
+echo "📡 访问地址："
+echo "  内网/本机 : 前端 http://127.0.0.1:5173"
+echo "              API  http://127.0.0.1:8000/docs"
+[ -n "${PRIVATE_IP}" ] && echo "  局域网    : 前端 http://${PRIVATE_IP}:5173"
+[ -n "${PRIVATE_IP}" ] && echo "              API  http://${PRIVATE_IP}:8000/docs"
+[ -n "${PUBLIC_IP}" ]  && echo "  公网(※)  : 前端 http://${PUBLIC_IP}:5173"
+[ -n "${PUBLIC_IP}" ]  && echo "              API  http://${PUBLIC_IP}:8000/docs"
+[ -n "${PUBLIC_IP}" ]  && echo "  ※ 公网访问需在云控制台放行 5173/8000 TCP 端口（安全组/防火墙）"
+echo ""
+echo "服务管理命令："
+echo "  查看状态       : ./manage-supervisor.sh status"
+echo "  重启所有服务   : ./manage-supervisor.sh restart"
+echo "  停止所有服务   : ./manage-supervisor.sh stop"
+echo "  后端日志       : ./manage-supervisor.sh logs-backend"
+echo "  前端日志       : ./manage-supervisor.sh logs-frontend"
+echo "修改 .env 后生效: ./manage-supervisor.sh restart"
+echo ""
+echo "命令行使用       : ./run_cli.sh input.mp4"

@@ -48,8 +48,11 @@ unset -f _read_env_from_rc
 unset _SHELL_RC
 
 # 3) 强制默认值（仅变量还为空时设）
-: "${HF_ENDPOINT:=https://hf-mirror.com}"
-export HF_ENDPOINT
+#    HF_ENDPOINT：留空直连官方 huggingface.co（当前环境直连 200 OK，比部分仓库 308 回源的镜像更稳）
+#    如需使用国内镜像，可在 .env 里显式设置: HF_ENDPOINT=https://hf-mirror.com
+if [ -z "${HF_ENDPOINT:-}" ]; then
+    unset HF_ENDPOINT
+fi
 export HF_HOME="${INDEX_TTS_DIR}/.cache/hf"
 export PYTHONUNBUFFERED=1
 export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python

@@ -6,6 +6,7 @@
 import os
 import sys
 import time
+import shutil
 import logging
 import threading
 from pathlib import Path
@@ -127,9 +128,64 @@ class ModelPreloader:
             self.model_status[model_name]["error"] = str(e)
             self.logger.error(f"❌ {model_name} 模型预加载失败: {e}")
     
+    def _sanitize_indext2_hf_cache(self) -> None:
+        """
+        在调用第三方 IndexTTS2 之前，对 checkpoints/hf_cache/ 做完整性检查，
+        遇到下载中断留下的空壳半成品目录/文件时提前清理掉，
+        迫使第三方 ensure_models_available 重新下载完整副本。
+        全程不修改任何第三方 index-tts 子模块代码。
+        """
+        src_dir = Path(__file__).resolve().parent.parent
+        hf_cache = src_dir / "index-tts" / "checkpoints" / "hf_cache"
+        if not hf_cache.is_dir():
+            return
+
+        w2v_dir = hf_cache / "w2v-bert-2.0"
+        w2v_marker = w2v_dir / "preprocessor_config.json"
+        w2v_model = w2v_dir / "model.safetensors"
+        if w2v_dir.is_dir():
+            if not w2v_marker.is_file() or not w2v_model.is_file() or w2v_model.stat().st_size < 100 * 1024 * 1024:
+                self.logger.warning(
+                    f"🧹 w2v-bert-2.0 目录存在但关键文件缺失/不完整（仅 {w2v_model.stat().st_size if w2v_model.is_file() else 0} 字节），"
+                    f"清理半成品目录: {w2v_dir}"
+                )
+                shutil.rmtree(w2v_dir, ignore_errors=True)
+                bad_hub_cache = src_dir / "index-tts" / ".cache" / "hf" / "hub" / "models--facebook--w2v-bert-2.0"
+                if bad_hub_cache.is_dir():
+                    shutil.rmtree(bad_hub_cache, ignore_errors=True)
+
+        sem_file = hf_cache / "semantic_codec_model.safetensors"
+        if sem_file.exists():
+            if sem_file.stat().st_size < 100 * 1024 * 1024:
+                self.logger.warning(f"🧹 semantic_codec_model.safetensors 仅 {sem_file.stat().st_size} 字节，清理半成品")
+                sem_file.unlink(missing_ok=True)
+        sem_dir = hf_cache / "semantic_codec"
+        sem_inner = sem_dir / "model.safetensors"
+        if sem_dir.is_dir():
+            if not sem_inner.is_file() or sem_inner.stat().st_size < 100 * 1024 * 1024:
+                self.logger.warning(f"🧹 semantic_codec/ 目录不完整，清理半成品: {sem_dir}")
+                shutil.rmtree(sem_dir, ignore_errors=True)
+
+        camp_file = hf_cache / "campplus_cn_common.bin"
+        if camp_file.exists() and camp_file.stat().st_size < 10 * 1024 * 1024:
+            self.logger.warning(f"🧹 campplus_cn_common.bin 仅 {camp_file.stat().st_size} 字节，清理半成品")
+            camp_file.unlink(missing_ok=True)
+
+        bigvgan_dir = hf_cache / "bigvgan"
+        bigv_cfg = bigvgan_dir / "config.json"
+        bigv_pt = bigvgan_dir / "bigvgan_generator.pt"
+        if bigvgan_dir.is_dir():
+            if not bigv_cfg.is_file() or not bigv_pt.is_file() or bigv_pt.stat().st_size < 100 * 1024 * 1024:
+                self.logger.warning(
+                    f"🧹 bigvgan/ 目录不完整（pt={bigv_pt.stat().st_size if bigv_pt.is_file() else 0} 字节），"
+                    f"清理半成品: {bigvgan_dir}"
+                )
+                shutil.rmtree(bigvgan_dir, ignore_errors=True)
+
     def _preload_indexTTS2(self):
         """预加载 IndexTTS2 模型"""
         try:
+            self._sanitize_indext2_hf_cache()
             from .voice_cloner import VoiceCloner
             voice_cloner = VoiceCloner(self.config)
             self.loaded_models["IndexTTS2"] = voice_cloner

@@ -39,7 +39,14 @@ echo "=========================================="
 # 0. 检查 uv
 if ! command -v uv &>/dev/null; then
     echo "📦 安装 uv..."
-    pip install -U uv
+    if command -v pip &>/dev/null; then
+        pip install -U uv
+    elif command -v pip3 &>/dev/null; then
+        pip3 install -U uv
+    else
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        export PATH="$HOME/.local/bin:$PATH"
+    fi
 fi
 echo "✅ uv: $(uv --version 2>/dev/null | head -1 || echo OK)"
 

@@ -20,9 +20,9 @@ SOCK_FILE="${PROJECT_ROOT}/data/run/supervisor.sock"
 PID_FILE="${PROJECT_ROOT}/data/run/supervisord.pid"
 LOG_DIR="${PROJECT_ROOT}/data/logs/supervisor"
 
-# 环境变量注入给 supervisord 配置
-export ENV_USER="$(id -un)"
-export ENV_PROJECT_ROOT="${PROJECT_ROOT}"
+# 环境变量注入给 supervisord 配置（供 %(ENV_XXX)s 语法对应 shell 中 XXX）
+export PROJECT_ROOT="${PROJECT_ROOT}"
+export USER="$(id -un)"
 
 # 创建必要目录
 mkdir -p "${PROJECT_ROOT}/data/run" "${LOG_DIR}"
@@ -63,7 +63,7 @@ _ctl() {
         echo "   请先运行: $0 start"
         exit 1
     fi
-    supervisorctl -s "unix://${SOCK_FILE}" "$@"
+    supervisorctl -c "${CONF_FILE}" -s "unix://${SOCK_FILE}" "$@"
 }
 
 start_supervisord() {
@@ -93,7 +93,7 @@ stop_supervisord() {
         return 0
     fi
     echo -e "${BLUE}🛑 停止所有服务并退出 supervisord...${NC}"
-    supervisorctl -s "unix://${SOCK_FILE}" shutdown || true
+    supervisorctl -c "${CONF_FILE}" -s "unix://${SOCK_FILE}" shutdown || true
     # 等待退出
     for i in $(seq 1 20); do
         if ! _is_supervisord_running; then

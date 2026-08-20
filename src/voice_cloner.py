@@ -20,9 +20,10 @@ except Exception:
     except Exception:
         pass
 
-# 对 HF_ENDPOINT / HF_HOME 提供默认值（仅在未设置时赋值）
-# 这样既尊重 .env / 进程环境变量，又不会因为配置缺失而崩溃。
-os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+# 对 HF_HOME 提供默认值（仅在未设置时赋值）。
+# HF_ENDPOINT 不再在代码里硬编码镜像，完全由 .env / setup_env.sh / supervisord environment 管理：
+#   - 留空/未设置：直连官方 https://huggingface.co（当前服务器直连 200 OK，比部分仓库会 308 回源的镜像更稳）
+#   - 显式设置 HF_ENDPOINT=https://hf-mirror.com：走国内镜像
 _HF_HOME_DEFAULT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "index-tts", ".cache", "hf")
 )
