@@ -42,48 +42,108 @@ class TextTranslator:
         self.translation_config = config.get("translation", {})
         self.source_language = self.translation_config.get("source_language", "zh")
         self.target_language = self.translation_config.get("target_language", "zh")  # 修复：默认值改为zh
-        self.translation_model = self.translation_config.get("model", "qwen-flash")
-        
+
+        # 运行时 LLM 配置：优先级 .env LLM_* > .env DASHSCOPE_API_KEY(DashScope兼容模式) > config.yaml > 代码内置安全默认
+        # 这样既支持任何 OpenAI 兼容服务（LMDeploy / vLLM / Ollama / SiliconFlow / Groq 等），
+        # 也向后兼容老用户只写 DASHSCOPE_API_KEY 的情况。
+        env_llm_base_url = (os.getenv("LLM_BASE_URL") or "").strip()
+        env_llm_api_key = (os.getenv("LLM_API_KEY") or "").strip()
+        env_llm_model = (os.getenv("LLM_MODEL") or "").strip()
+        env_llm_temperature = (os.getenv("LLM_TEMPERATURE") or "").strip()
+        env_llm_timeout = (os.getenv("LLM_TIMEOUT") or "").strip()
+        env_dashscope_key = (os.getenv("DASHSCOPE_API_KEY") or "").strip()
+
+        if env_llm_base_url:
+            # 模式 A：用户显式指定了 LLM_BASE_URL → 通用 OpenAI 兼容模式
+            self.llm_provider = "openai-compatible"
+            self.llm_base_url = env_llm_base_url.rstrip("/")
+            if not env_llm_api_key:
+                raise ValueError(
+                    "已设置 LLM_BASE_URL 但未设置 LLM_API_KEY。\n"
+                    "请在 .env 中补充 LLM_API_KEY（即使是本地 Ollama/vLLM 不带鉴权，也请填占位字符串 'EMPTY' 或 'none'）。"
+                )
+            self.llm_api_key = env_llm_api_key
+            self.translation_model = env_llm_model or self.translation_config.get("model", "gpt-4o-mini")
+        elif env_dashscope_key:
+            # 模式 B：未设置 LLM_BASE_URL 但有 DASHSCOPE_API_KEY → 向后兼容 DashScope OpenAI 兼容模式
+            self.llm_provider = "dashscope"
+            self.llm_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            self.llm_api_key = env_dashscope_key
+            self.translation_model = env_llm_model or self.translation_config.get("model", "qwen-flash")
+        elif env_llm_api_key:
+            # 模式 C：未写 base_url 仅写了 LLM_API_KEY → 默认走官方 OpenAI
+            self.llm_provider = "openai-official"
+            self.llm_base_url = "https://api.openai.com/v1"
+            self.llm_api_key = env_llm_api_key
+            self.translation_model = env_llm_model or self.translation_config.get("model", "gpt-4o-mini")
+        else:
+            raise ValueError(
+                "未配置 LLM 翻译密钥。请在 .env 中配置以下任一组：\n"
+                "【通用 OpenAI 兼容（推荐，支持 LMDeploy/vLLM/Ollama/SiliconFlow/Groq 等）】\n"
+                "  LLM_BASE_URL=https://你的接口地址/v1\n"
+                "  LLM_API_KEY=sk-xxx （本地无鉴权填 EMPTY）\n"
+                "  LLM_MODEL=Qwen/Qwen2.5-72B-Instruct\n\n"
+                "【官方 OpenAI】\n"
+                "  LLM_API_KEY=sk-proj-xxx\n"
+                "  LLM_MODEL=gpt-4o-mini\n\n"
+                "【阿里云 DashScope（向后兼容）】\n"
+                "  DASHSCOPE_API_KEY=sk-xxx\n"
+                "  # 可选：LLM_MODEL=qwen-turbo  不填默认 qwen-flash"
+            )
+
+        try:
+            self.llm_temperature = float(env_llm_temperature)
+        except (TypeError, ValueError):
+            self.llm_temperature = float(self.translation_config.get("temperature", 0.1))
+        try:
+            self.llm_timeout = float(env_llm_timeout)
+        except (TypeError, ValueError):
+            self.llm_timeout = 300.0
+
         # 重试策略配置
         self.retry_strategy = self.translation_config.get("retry_strategy", "adaptive")
         self.max_batch_size = self.translation_config.get("max_batch_size", 100)
         self.max_retries = self.translation_config.get("max_retries", 3)
         self.single_segment_retries = self.translation_config.get("single_segment_retries", 3)
-        
+
+        self.logger.info(
+            "翻译 LLM 配置: provider=%s base_url=%s model=%s temperature=%s timeout=%ss",
+            self.llm_provider,
+            self.llm_base_url,
+            self.translation_model,
+            self.llm_temperature,
+            self.llm_timeout,
+        )
         self.logger.info(f"翻译重试策略: {self.retry_strategy}")
         self.logger.info(f"最大批量大小: {self.max_batch_size}")
         self.logger.info(f"翻译模型版本: {self.translation_model}")
-        
+
         # 初始化翻译引擎
         self._init_translation_engine()
     
     def _init_translation_engine(self):
-        """初始化翻译引擎"""
+        """初始化翻译引擎（OpenAI 兼容 chat completions）。所有 URL/Key/Model/Timeout 已在 __init__ 中从 .env 解析。"""
         try:
-            self.logger.info(f"使用 {self.translation_model} 大模型翻译引擎")
+            self.logger.info(
+                "使用 OpenAI 兼容翻译引擎: provider=%s model=%s base_url=%s",
+                getattr(self, "llm_provider", "unknown"),
+                self.translation_model,
+                getattr(self, "llm_base_url", ""),
+            )
             try:
                 from openai import OpenAI
-                import os
-                # 从环境变量读取API密钥
-                api_key = os.getenv("DASHSCOPE_API_KEY")
-                if not api_key:
-                    raise ValueError(
-                        "未设置DASHSCOPE_API_KEY环境变量。"
-                        "请通过以下方式设置：\n"
-                        "  export DASHSCOPE_API_KEY='your-api-key'\n"
-                        "或在代码运行前设置环境变量。"
-                        "获取API密钥请访问：https://dashscope.console.aliyun.com/"
-                    )
+
                 self.translator = OpenAI(
-                    api_key=api_key,
-                    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-                    timeout=300.0,  # 增加超时时间到5分钟，处理大批量翻译
+                    api_key=self.llm_api_key,
+                    base_url=self.llm_base_url,
+                    timeout=self.llm_timeout,
+                    max_retries=self.max_retries,
                 )
-                self.logger.info(f"{self.translation_model}翻译引擎初始化成功")
+                self.logger.info(f"{self.translation_model} 翻译引擎初始化成功")
             except Exception as e:
                 self.logger.error(f"{self.translation_model}翻译引擎初始化失败: {e}")
                 self.translator = None
-                
+
         except Exception as e:
             self.logger.error(f"翻译引擎初始化失败: {e}")
             raise
@@ -352,7 +412,7 @@ class TextTranslator:
                 # 构建当前批次的翻译prompt
                 prompt = self._create_batch_translation_prompt(batch_segments)
                 
-                self.logger.info(f"发送第 {batch_num} 批翻译请求到{self.model_version}...")
+                self.logger.info(f"发送第 {batch_num} 批翻译请求到 {self.translation_model} ({getattr(self, 'llm_provider', 'unknown')}) ...")
                 messages = [{"role": "user", "content": prompt}]
                 
                 # 调用API
@@ -360,7 +420,7 @@ class TextTranslator:
                     model=self.translation_model,
                     messages=messages,
                     stream=False,
-                    temperature=0.1  # 稍微提高创造性，但保持一致性
+                    temperature=self.llm_temperature
                 )
                 
                 # 获取翻译结果
@@ -761,11 +821,11 @@ class TextTranslator:
                 model=self.translation_model,
                 messages=messages,
                 stream=False,
-                temperature=0.1
+                temperature=self.llm_temperature
             )
-            
+
             response = completion.choices[0].message.content.strip()
-            
+
             # 记录重试交互
             self._log_llm_interaction(retry_prompt, response, None, None, segments, retry_num=attempt_num)
             
@@ -925,7 +985,7 @@ class TextTranslator:
                 model=self.translation_model,
                 messages=messages,
                 stream=False,
-                temperature=0.1
+                temperature=self.llm_temperature
             )
             
             response_text = completion.choices[0].message.content.strip()
@@ -1019,7 +1079,7 @@ class TextTranslator:
                     model=self.translation_model,
                     messages=messages,
                     stream=False,
-                    temperature=0.1
+                    temperature=self.llm_temperature
                 )
                 
                 response_text = completion.choices[0].message.content.strip()
@@ -1107,7 +1167,7 @@ class TextTranslator:
                     model=self.translation_model,
                     messages=messages,
                     stream=False,
-                    temperature=0.1
+                    temperature=self.llm_temperature
                 )
                 
                 response_text = completion.choices[0].message.content.strip()
