@@ -68,16 +68,14 @@ echo "✅ HEAD -> $(git rev-parse --short HEAD)"
 
 [ -f pyproject.toml ] || { echo "❌ pyproject.toml 缺失，克隆失败？"; exit 1; }
 
-# 2. git-lfs 下载示例音频
-if ! command -v git-lfs &>/dev/null; then
-    echo "📦 安装 git-lfs..."
-    if [ "$EUID" -eq 0 ]; then SUDO_CMD=""; else SUDO_CMD="sudo"; fi
-    $SUDO_CMD apt-get update -qq
-    $SUDO_CMD apt-get install -y git-lfs
+# 2. 跳过 git-lfs 示例音频（非必需，用于官方 demo；本项目用户上传自己的音视频，不需要 index-tts 仓库里的 LFS 示例音频）
+#    这样新装机器不需要额外安装 git-lfs / 不需要下载几百 MB 的示例音频 LFS 文件，节省时间和流量。
+if command -v git-lfs &>/dev/null; then
+    echo "ℹ️  本机已有 git-lfs，但跳过 index-tts 仓库 LFS 示例音频（本项目不需要）"
+    git -C "${PROJECT_ROOT}/index-tts" lfs install --local 2>/dev/null || true
+else
+    echo "ℹ️  跳过 git-lfs 安装（index-tts 仓库的 LFS 示例音频本项目不使用）"
 fi
-git lfs install
-echo "📥 git lfs pull（示例音频）"
-git lfs pull || echo "⚠️  git lfs pull 失败（LFS 示例音频非必需）"
 
 # 3. uv sync 安装 Python 依赖
 echo "📦 uv sync (index=${UV_DEFAULT_INDEX})"
