@@ -134,6 +134,32 @@ else
     fi
 fi
 
+# 6. 兜底：确保 checkpoints/config.yaml 存在（第三方 ensure_config_available 有时会失败，
+#    但 step7 音色克隆 IndexTTS2(infer_v2) 第 82 行硬执行 OmegaConf.load(cfg_path)，
+#    缺了就 FileNotFoundError；这里在模型下载完成后直接用 curl 再补一次，彻底避免）
+if [ ! -f "checkpoints/config.yaml" ]; then
+    echo "⚠️  checkpoints/config.yaml 缺失，直接用 curl 从 IndexTeam/IndexTTS-2 仓库补下载..."
+    CFG_CURL_RC=0
+    if [ -n "${HF_ENDPOINT}" ]; then
+        curl -sSL --max-time 30 -o checkpoints/config.yaml \
+            "${HF_ENDPOINT%/}/IndexTeam/IndexTTS-2/resolve/main/config.yaml" || CFG_CURL_RC=$?
+    fi
+    if [ "${CFG_CURL_RC}" -ne 0 ] || [ ! -f "checkpoints/config.yaml" ]; then
+        echo "  ⚠️  HF_ENDPOINT=${HF_ENDPOINT} 下载失败，回退 hf-mirror 直连..."
+        CFG_CURL_RC=0
+        curl -sSL --max-time 30 -o checkpoints/config.yaml \
+            "https://hf-mirror.com/IndexTeam/IndexTTS-2/resolve/main/config.yaml" || CFG_CURL_RC=$?
+    fi
+    if [ -f "checkpoints/config.yaml" ] && grep -q "^gpt:" checkpoints/config.yaml 2>/dev/null; then
+        echo "✅ checkpoints/config.yaml 已补全 ($(wc -c < checkpoints/config.yaml) bytes)"
+    else
+        echo "❌ checkpoints/config.yaml 仍缺失。请手动执行以下命令补全："
+        echo "    cd ${PROJECT_ROOT}/index-tts && \\"
+        echo "    curl -sSL -o checkpoints/config.yaml \\"
+        echo "      https://hf-mirror.com/IndexTeam/IndexTTS-2/resolve/main/config.yaml"
+    fi
+fi
+
 deactivate
 cd "${PROJECT_ROOT}"
 echo ""

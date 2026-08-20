@@ -73,3 +73,27 @@ else:
     print('   系统仍可运行，但首次翻译时会重新加载模型')
     sys.exit(1)
 "
+
+# 额外兜底：如果 IndexTTS2 checkpoints/config.yaml 缺失（之前已经遇到过，
+# third-party ensure_config_available 有时 huggingface_hub 回源失败，但 curl hf-mirror
+# 能 200 OK），这里用 curl 再补一次，避免 step7 音色克隆时直接 FileNotFoundError 2。
+INDEX_TTS_CHECKPOINTS="${INDEX_TTS_DIR}/checkpoints"
+CFG="${INDEX_TTS_CHECKPOINTS}/config.yaml"
+if [ ! -f "${CFG}" ]; then
+    echo ""
+    echo "⚠️  ${CFG} 缺失（preload 脚本兜底下载）..."
+    RC=0
+    if [ -n "${HF_ENDPOINT}" ]; then
+        curl -sSL --max-time 30 -o "${CFG}" "${HF_ENDPOINT%/}/IndexTeam/IndexTTS-2/resolve/main/config.yaml" || RC=$?
+    fi
+    if [ ${RC} -ne 0 ] || [ ! -f "${CFG}" ] || ! grep -q "^gpt:" "${CFG}" 2>/dev/null; then
+        RC=0
+        curl -sSL --max-time 30 -o "${CFG}" "https://hf-mirror.com/IndexTeam/IndexTTS-2/resolve/main/config.yaml" || RC=$?
+    fi
+    if [ -f "${CFG}" ] && grep -q "^gpt:" "${CFG}" 2>/dev/null; then
+        echo "✅ index-tts/checkpoints/config.yaml 兜底下载成功（$(wc -c < "${CFG}") bytes）"
+    else
+        echo "❌ 兜底下载失败。请手动执行："
+        echo "    curl -sSL -o ${CFG} https://hf-mirror.com/IndexTeam/IndexTTS-2/resolve/main/config.yaml"
+    fi
+fi

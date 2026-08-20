@@ -236,6 +236,63 @@ export UV_DEFAULT_INDEX NPM_REGISTRY HF_ENDPOINT NODE_SETUP_URL UV_HTTP_TIMEOUT 
 if [ "$EUID" -eq 0 ]; then SUDO_CMD=""; else SUDO_CMD="sudo"; fi
 
 # ============================================================
+# E1. uv 自举（新装裸机最容易踩的坑：uv: command not found）
+#     install_with_uv_china.sh / install_with_uv_official.sh / install_index_tts.sh
+#     自己也有 uv 安装，但父脚本这里统一保证 PATH 里有 uv，子脚本就不会再各自跑
+#     curl 安装；同时 china/official 用不同的 UV_INSTALL_DOWNLOAD_URL 镜像。
+# ============================================================
+ensure_uv_installed() {
+    # 如果当前 shell 找不到 uv，但 ~/.local/bin/uv 已经存在，则优先补 PATH
+    if ! command -v uv &>/dev/null && [ -x "$HOME/.local/bin/uv" ]; then
+        export PATH="$HOME/.local/bin:${PATH}"
+    fi
+    if command -v uv &>/dev/null; then
+        echo "✅ uv: $(uv --version 2>/dev/null | head -1 || echo OK)"
+        return 0
+    fi
+    echo "📦 安装 uv 包管理器..."
+    local uv_installer_url
+    case "${MIRROR_MODE}" in
+        tencent*|china)
+            # 国内镜像：BFSU mirrors 走 astral-sh/uv 的 GitHub release 镜像（astral.sh 官方站在国内有时会 403/超时）
+            if [ -n "${UV_INSTALL_URL:-}" ]; then
+                uv_installer_url="${UV_INSTALL_URL}"
+            else
+                uv_installer_url="https://mirrors.bfsu.edu.cn/github-release/astral-sh/uv/LatestRelease/uv-installer.sh"
+            fi
+            # 镜像站如果不可用（例如首次下载脚本 404/超时），fallback 回官方 astral.sh 原版
+            set +e
+            TMP_INSTALLER="$(mktemp)"
+            if curl ${CURL_ARGS} -o "${TMP_INSTALLER}" "${uv_installer_url}"; then
+                sh "${TMP_INSTALLER}" 2>&1 | tail -5 || {
+                    echo "⚠️  国内镜像 uv installer 失败，回退 astral.sh 官方..."
+                    rm -f "${TMP_INSTALLER}"
+                    curl -LsSf https://astral.sh/uv/install.sh | sh
+                }
+            else
+                echo "⚠️  国内镜像 uv installer 下载失败（${uv_installer_url}），回退 astral.sh 官方..."
+                rm -f "${TMP_INSTALLER}"
+                curl -LsSf https://astral.sh/uv/install.sh | sh
+            fi
+            set -e
+            rm -f "${TMP_INSTALLER}"
+            ;;
+        *)
+            curl -LsSf https://astral.sh/uv/install.sh | sh
+            ;;
+    esac
+    export PATH="$HOME/.local/bin:${PATH}"
+    # 再校验一次
+    if command -v uv &>/dev/null; then
+        echo "✅ uv: $(uv --version 2>/dev/null | head -1 || echo OK)"
+    else
+        echo "❌ uv 安装失败（PATH=$PATH）；请手动执行: curl -LsSf https://astral.sh/uv/install.sh | sh && source ~/.bashrc"
+        exit 1
+    fi
+}
+ensure_uv_installed
+
+# ============================================================
 # 步骤1: 系统依赖 (FFmpeg / lsof / Node.js / Supervisor)
 # ============================================================
 echo ""
@@ -404,6 +461,33 @@ else
 fi
 
 # ============================================================
+# 步骤7B/8: 离线模型可用性校验（HF_HUB_OFFLINE=1，不加载真权重，只到 cfg 加载 / backend 选择阶段，
+#          5s 内出结果，确保 step4 faster-whisper 和 step7 IndexTTS2 config.yaml 真的在本地）
+# ============================================================
+echo ""
+echo "=========================================="
+echo "🔍 步骤 7B/8: 离线模型校验（确保翻译前本地 cache 齐全）"
+echo "=========================================="
+OFFLINE_VERIFY_RC=0
+OFFLINE_VERIFY_SKIP=0
+if [ -x "${PROJECT_ROOT}/scripts/verify_offline_cache.sh" ] && [ -x "${PROJECT_ROOT}/index-tts/.venv/bin/python" ]; then
+    set +e
+    bash "${PROJECT_ROOT}/scripts/verify_offline_cache.sh"
+    OFFLINE_VERIFY_RC=$?
+    set -e
+    if [ ${OFFLINE_VERIFY_RC} -eq 0 ]; then
+        echo "✅ 离线校验通过（step4 faster-whisper cache / step7 IndexTTS2 config.yaml 均齐全）"
+    else
+        echo "⚠️  离线校验未通过（退出码 ${OFFLINE_VERIFY_RC}）。可按脚本提示的手动命令修复后，重跑："
+        echo "     bash ${PROJECT_ROOT}/scripts/verify_offline_cache.sh"
+        echo "   不强制退出；启动服务后首次翻译会再自动尝试下载，但耗时会更长、偶发超时失败。"
+    fi
+else
+    OFFLINE_VERIFY_SKIP=1
+    echo "ℹ️  跳过离线校验（脚本/虚拟环境未就绪）"
+fi
+
+# ============================================================
 # 步骤8: 自动启动服务
 # ============================================================
 echo ""
@@ -488,6 +572,13 @@ if [ "${PRELOAD_SUCCESS:-0}" -eq 1 ]; then
 else
     echo "  模型预加载    : ⚠️  未完成；首次翻译时会自动联网下载（约 3~8GB）"
 fi
+if [ "${OFFLINE_VERIFY_SKIP:-0}" -eq 1 ]; then
+    echo "  离线模型校验  : ℹ️  跳过（虚拟环境/脚本未就绪）"
+elif [ "${OFFLINE_VERIFY_RC:-0}" -eq 0 ]; then
+    echo "  离线模型校验  : ✅ step4/step7 本地 cache 齐全（翻译首次启动不会再访问 Hub）"
+else
+    echo "  离线模型校验  : ⚠️  未通过。重跑校验：bash ./scripts/verify_offline_cache.sh"
+fi
 if [ $AUTO_START_SUCCESS -eq 1 ]; then
     echo "  服务状态      : ✅ 已自动启动"
 else
@@ -511,4 +602,6 @@ echo "  后端日志       : ./manage-supervisor.sh logs-backend"
 echo "  前端日志       : ./manage-supervisor.sh logs-frontend"
 echo "修改 .env 后生效: ./manage-supervisor.sh restart"
 echo ""
+echo "离线模型校验（确保翻译前 cache 齐全）:"
+echo "  手动重跑       : bash ./scripts/verify_offline_cache.sh"
 echo "命令行使用       : ./run_cli.sh input.mp4"
