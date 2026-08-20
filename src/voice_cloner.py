@@ -110,29 +110,55 @@ class VoiceCloner:
         """初始化IndexTTS2"""
         try:
             self.logger.info("初始化IndexTTS2...")
-            
+
             # 检查依赖
             self._check_dependencies()
-            
+
             # 直接导入IndexTTS2（避免重复初始化）
             if self._model is None:
                 self.logger.info("首次加载IndexTTS2模型...")
                 from indextts.infer_v2 import IndexTTS2
-                
+
+                cfg_path = os.path.join(self.model_path, "checkpoints/config.yaml")
+                model_dir = os.path.join(self.model_path, "checkpoints")
+
+                if not os.path.isfile(cfg_path):
+                    self.logger.warning(
+                        "index-tts/checkpoints/config.yaml 不存在，尝试自动从 IndexTeam/IndexTTS-2 "
+                        "仓库下载（使用 dotenv 注入的 HF_ENDPOINT / 镜像）。"
+                    )
+                    from indextts.utils.model_download import ensure_config_available
+                    try:
+                        ensure_config_available(model_dir)
+                    except Exception as inner:
+                        msg = (
+                            f"ensure_config_available 下载失败: {type(inner).__name__}: {str(inner)[:200]}。"
+                            f" 请手动在服务器执行以下命令补全文件（国内服务器推荐 hf-mirror），然后重试：\n"
+                            f"  cd /home/ubuntu/video-voice-translator && \\\n"
+                            f"  curl -sSL -o index-tts/checkpoints/config.yaml \\\n"
+                            f"    https://hf-mirror.com/IndexTeam/IndexTTS-2/resolve/main/config.yaml"
+                        )
+                        self.logger.error(msg)
+                        raise RuntimeError(msg) from inner
+                    if not os.path.isfile(cfg_path):
+                        raise RuntimeError(
+                            "ensure_config_available 执行后 config.yaml 仍不存在，请按日志提示手动 curl"
+                        )
+
                 # 初始化IndexTTS2模型（启用FP16 + CUDA Kernel优化）
                 self._model = IndexTTS2(
-                    cfg_path=os.path.join(self.model_path, "checkpoints/config.yaml"),
-                    model_dir=os.path.join(self.model_path, "checkpoints"),
-                    use_fp16=True,        # 启用FP16精度，提升速度并减少显存占用
-                    use_cuda_kernel=True, # 启用CUDA kernel加速
-                    use_deepspeed=False
+                    cfg_path=cfg_path,
+                    model_dir=model_dir,
+                    use_fp16=True,
+                    use_cuda_kernel=True,
+                    use_deepspeed=False,
                 )
                 self.logger.info("✅ IndexTTS2模型加载完成")
             else:
                 self.logger.info("✅ IndexTTS2模型已存在，复用现有实例")
-            
+
             self.logger.info("IndexTTS2初始化完成")
-            
+
         except Exception as e:
             self.logger.error(f"IndexTTS2初始化失败: {e}")
             raise
