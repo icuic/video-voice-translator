@@ -237,34 +237,101 @@ class WhisperProcessor:
     def _init_faster_whisper(self):
         """初始化 Faster-Whisper 模型"""
         import torch
-        
+
         if self.device == "auto":
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        
-        # Faster-Whisper 设备设置
+
         if self.device == "cuda" and torch.cuda.is_available():
             self.device = "cuda"
-            # 设置环境变量强制使用CUDA
             os.environ["CUDA_VISIBLE_DEVICES"] = "0"
             torch.cuda.set_device(0)
             self.logger.info(f"使用CUDA设备: {torch.cuda.get_device_name(0)}")
-            
-            # 清理CUDA缓存
             torch.cuda.empty_cache()
         else:
             self.device = "cpu"
             self.logger.info("使用CPU设备")
-        
-        # 设置计算类型
+
         compute_type = "float16" if self.fp16 and self.device == "cuda" else "float32"
-        
-        # 加载 Faster-Whisper 模型
-        self.model = FasterWhisperModel(
+
+        faster_whisper_extra = {}
+        cache_dir = self.whisper_config.get("cache_dir")
+        if cache_dir:
+            faster_whisper_extra["cache_dir"] = cache_dir
+        local_files_only_env = os.environ.get("HF_HUB_OFFLINE", "").strip()
+        local_files_only_flag = self.whisper_config.get("local_files_only", None)
+        if local_files_only_flag is None:
+            if local_files_only_env in ("1", "true", "TRUE", "on", "ON"):
+                local_files_only_flag = True
+            else:
+                local_files_only_flag = False
+        if local_files_only_flag:
+            faster_whisper_extra["local_files_only"] = True
+
+        fallback_to_whisper_reasons = []
+        try:
+            self.model = FasterWhisperModel(
+                self.model_size,
+                device=self.device,
+                compute_type=compute_type,
+                **faster_whisper_extra,
+            )
+            self.logger.info(
+                f"Faster-Whisper模型成功加载到设备: {self.device}, 计算类型: {compute_type}"
+            )
+            return
+        except Exception as faster_err:
+            err_name = type(faster_err).__name__
+            err_msg = str(faster_err)[:400]
+            fallback_to_whisper_reasons.append(
+                f"Faster-Whisper init failed: {err_name}: {err_msg}"
+            )
+            hub_related = any(
+                kw in err_msg.lower()
+                for kw in (
+                    "localentrynotfound",
+                    "locate the file on the hub",
+                    "filemetadataerror",
+                    "connectionerror",
+                    "connection timed out",
+                    "requests.exceptions",
+                    "temporary failure in name resolution",
+                    "network is unreachable",
+                    "proxyerror",
+                    "ssl: cert",
+                    "timed out",
+                    "httperror",
+                )
+            ) or err_name in (
+                "LocalEntryNotFoundError",
+                "FileMetadataError",
+                "ConnectionError",
+            )
+            if not hub_related:
+                raise
+
+        if not WHISPER_AVAILABLE:
+            msg = (
+                f"Faster-Whisper 加载 Systran/faster-whisper-{self.model_size} 失败"
+                f"（本地 cache 不存在且 HuggingFace 直连失败），且原生 openai-whisper 未安装，"
+                f"无法降级。请在 .env 中配置可用的 HF_ENDPOINT（例如"
+                f" HF_ENDPOINT=https://hf-mirror.com），然后手动运行一次："
+                f" bash scripts/preload_models.sh  或  pip install openai-whisper 后重试。"
+                f" 底层原因: {' | '.join(fallback_to_whisper_reasons)}"
+            )
+            self.logger.error(msg)
+            raise RuntimeError(msg)
+
+        self.logger.warning(
+            "Faster-Whisper 加载失败（HuggingFace 不可达或本地无 Systran cache），"
+            "自动回退到原生 openai-whisper。"
+            " 如需要 faster-whisper 加速，请在 .env 里配置 HF_ENDPOINT=https://hf-mirror.com，"
+            "然后执行 bash scripts/preload_models.sh 将 faster-whisper-%s 预下载到本地。"
+            " 底层原因: %s",
             self.model_size,
-            device=self.device,
-            compute_type=compute_type
+            " | ".join(fallback_to_whisper_reasons),
         )
-        self.logger.info(f"Faster-Whisper模型成功加载到设备: {self.device}, 计算类型: {compute_type}")
+        self.backend = "whisper"
+        self._init_whisper()
     
     def _transcribe_faster_whisper(self, audio_path: str, language: Optional[str] = None, initial_prompt: Optional[str] = None) -> Dict[str, Any]:
         """使用 Faster-Whisper 进行转录"""
