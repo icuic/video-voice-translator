@@ -94,11 +94,52 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 # 再兜底测一次 sudo docker 可用（免重新登录）
 if ! (sudo docker info >/dev/null 2>&1); then
-    log_error "sudo docker info 无法连接 docker daemon，尝试重启：sudo systemctl restart docker"
-    sudo systemctl restart docker 2>/dev/null || true
-    sleep 3
-    if ! (sudo docker info >/dev/null 2>&1); then
-        log_error "Docker daemon 仍不可用，请手动排查后再试"
+    log_warn "sudo docker info 无法连接 docker daemon..."
+    # HAI 实例很可能没有真正的 systemd (dumb-init/LXC 容器环境)，systemctl restart 没用，直接手动起 dockerd
+    log_info "尝试直接手动启动 dockerd（自动按 overlay2→fuse→vfs 顺序试 storage driver）..."
+    declare -a DOCKERD_STORAGE_ARGS=()
+    DOCKERD_LAUNCHED=0
+    for sd in overlay2 fuse-overlayfs vfs; do
+        DOCKERD_STORAGE_ARGS=(--storage-driver="$sd")
+        log_info "  试 storage-driver=$sd ..."
+        sudo mkdir -p /var/run /var/lib/docker /var/log
+        # 如果之前残留了 pid/socket，先清掉
+        sudo rm -f /var/run/docker.pid /var/run/docker.sock /tmp/dockerd.pid 2>/dev/null || true
+        sudo pkill -9 dockerd 2>/dev/null || true
+        sleep 1
+        # 后台起 dockerd，禁用网络栈相关组件（不需要 bridge/iptables/ip-masq 避免 LXC 嵌套权限不足）
+        sudo /usr/bin/dockerd "${DOCKERD_STORAGE_ARGS[@]}" \
+            --iptables=false --ip-masq=false --bridge=none \
+            --pidfile=/tmp/dockerd.pid \
+            > /tmp/dockerd-build.log 2>&1 &
+        DOCKERD_PID=$!
+        THIS_OK=0
+        # 等 16 秒看 socket 出不出来
+        for i in $(seq 1 20); do
+            sleep 1
+            if [[ -S /var/run/docker.sock ]]; then
+                if (sudo docker info >/dev/null 2>&1); then
+                    THIS_OK=1
+                    DOCKERD_LAUNCHED=1
+                    log_ok "dockerd 手动启动成功 (storage-driver=$sd, pid=$DOCKERD_PID)"
+                    break 2
+                fi
+            fi
+            # 进程没了说明起失败了，试下一个 driver
+            if ! (sudo kill -0 "$DOCKERD_PID" 2>/dev/null); then
+                break
+            fi
+        done
+        # 本轮失败才杀残留；成功就保留后台 daemon 继续用
+        if [[ "$THIS_OK" != "1" ]]; then
+            sudo kill -9 "$DOCKERD_PID" 2>/dev/null || true
+            wait "$DOCKERD_PID" 2>/dev/null || true
+        fi
+    done
+    # 最后再试一次 info
+    sleep 2
+    if [[ "$DOCKERD_LAUNCHED" != "1" ]] && ! (sudo docker info >/dev/null 2>&1); then
+        log_error "Docker daemon 仍不可用，请手动查看 /tmp/dockerd-build.log 排查；也可以跳过 build，用户仍可通过 hai-deploy.sh 走源码安装路径（10~20 分钟出页，功能不打折，只是首次部署稍慢）。"
         exit 1
     fi
 fi
