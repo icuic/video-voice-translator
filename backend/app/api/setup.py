@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -212,29 +213,34 @@ def _render_env(req: SetupApplyRequest) -> str:
 def _restart_supervisor() -> Dict[str, Any]:
     if not MANAGE_SCRIPT.is_file() or not os.access(MANAGE_SCRIPT, os.X_OK):
         return {"restarted": False, "message": "manage-supervisor.sh 不存在或不可执行，跳过重启", "code": None}
+    # 关键：必须通过 bash -lc 以"交互式 shell 脚本加载方式"执行 manage-supervisor.sh，
+    # 因为 manage-supervisor.sh 头部会 export PROJECT_ROOT / ENV_PROJECT_ROOT / ENV_USER，
+    # 后者正是 ini 配置中 %(ENV_PROJECT_ROOT)s / %(ENV_USER)s 依赖的环境变量。
+    # 若直接 subprocess.run([MANAGE_SCRIPT, "restart"])，FastAPI 子进程中默认没有这些 ENV_ 变量，
+    # 导致 supervisord reload 时读入空 command 路径 → 进程找不到脚本 → 反复退出 → STOPPED。
+    script = (
+        f"cd {shlex.quote(str(PROJECT_ROOT))} && "
+        f"bash -lc {shlex.quote(f'{str(MANAGE_SCRIPT)} restart all')}"
+    )
     try:
         proc = subprocess.run(
-            [str(MANAGE_SCRIPT), "restart"],
+            script,
+            shell=True,
             cwd=str(PROJECT_ROOT),
             capture_output=True,
             text=True,
             timeout=600,
         )
-        tail = "\n".join(proc.stdout.strip().splitlines()[-8:])
+        combined_lines = (proc.stdout or "") + "\n" + (proc.stderr or "")
+        tail = "\n".join(combined_lines.strip().splitlines()[-12:])
+        log_hint = (
+            "\n[提示] 若服务仍 STOPPED，请查看后端崩溃日志："
+            f" tail -n 80 {PROJECT_ROOT}/data/logs/supervisor/backend.err.log {PROJECT_ROOT}/data/logs/supervisor/frontend.err.log"
+        )
         if proc.returncode == 0:
-            return {"restarted": True, "message": tail or "服务已重启", "code": 0}
-        err = "\n".join(proc.stderr.strip().splitlines()[-4:])
-        msg_parts = []
-        if tail:
-            msg_parts.append(tail)
-        if err:
-            msg_parts.append(err)
-        message = ("\n".join(msg_parts) if msg_parts else f"返回码 {proc.returncode}")
-        return {
-            "restarted": False,
-            "message": message,
-            "code": proc.returncode,
-        }
+            return {"restarted": True, "message": (tail or "服务已重启") + log_hint, "code": 0}
+        message = (tail or f"返回码 {proc.returncode}") + log_hint
+        return {"restarted": False, "message": message, "code": proc.returncode}
     except subprocess.TimeoutExpired as e:
         return {"restarted": False, "message": f"重启超时（>600s）：{e}", "code": -1}
     except Exception as e:  # pragma: no cover
