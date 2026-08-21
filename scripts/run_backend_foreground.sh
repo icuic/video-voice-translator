@@ -103,7 +103,19 @@ else
 fi
 
 # 使用虚拟环境中的 Python 执行 uvicorn（前台运行，不要加 &）
-exec "${INDEX_TTS_DIR}/.venv/bin/python" -m uvicorn backend.app.main:app \
+# 关键：用 env 命令把 LLM_* 显式挂到新进程的环境表上，确保 /proc/<pid>/environ 一定能看到，
+# 彻底避免 supervisor + source setup_env.sh + exec 的某些组合下"父 shell 有 export 但子进程列表没显示"的问题。
+# 然后再交给 main.py 层再次从磁盘 .env 强制写入 os.environ，形成双保险。
+_FORCE_ENV_ARGS=()
+for k in LLM_BASE_URL LLM_API_KEY LLM_MODEL LLM_TEMPERATURE LLM_TIMEOUT DASHSCOPE_API_KEY MIRROR_MODE HF_ENDPOINT USE_MODELSCOPE PROJECT_ROOT INDEX_TTS_DIR HOME USER USERNAME LOGNAME PATH LANG LC_ALL TZ PYTHONPATH VIRTUAL_ENV; do
+  if [ -n "${!k:-}" ]; then
+    _FORCE_ENV_ARGS+=("${k}=${!k}")
+  fi
+done
+echo "[supervisord:backend] 启动 uvicorn 时强制注入环境变量数量: ${#_FORCE_ENV_ARGS[@]}"
+exec env \
+  "${_FORCE_ENV_ARGS[@]}" \
+  "${INDEX_TTS_DIR}/.venv/bin/python" -m uvicorn backend.app.main:app \
     --host "$HOST" \
     --port "$PORT" \
     $RELOAD_FLAG \
