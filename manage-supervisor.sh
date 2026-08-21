@@ -29,6 +29,54 @@ export USER="$(id -un)"
 export ENV_PROJECT_ROOT="${PROJECT_ROOT}"
 export ENV_USER="${USER}"
 
+# 关键：把 .env 文件中所有键 export 到当前 shell，supervisor 启动子进程时通过 ini
+# 中的 environment= 字段用 %(ENV_LLM_BASE_URL)s / %(ENV_LLM_API_KEY)s / %(ENV_LLM_MODEL)s
+# 等语法才能把它们注入到 uvicorn 进程里。如果缺少这一步，即使磁盘 .env 写了值，
+# 进程环境表 /proc/<pid>/environ 里也看不到 LLM_BASE_URL 等键（真实机多次验证过）。
+#
+# set -a 让下面的 . safe-source 对所有 VAR=VALUE 自动执行 export，
+# 不会被 while-read 子 shell 坑影响（bash 内置 source 在当前 shell 执行）。
+if [ -f "${PROJECT_ROOT}/.env" ]; then
+    _SAFE_DOTENV="$(mktemp /tmp/vvt-manage-supervisor-dotenv.XXXXXX)"
+    awk '
+        BEGIN { FS="=" }
+        {
+            line=$0
+            sub(/^[ \t]+/, "", line)
+            sub(/[ \t\r]+$/, "", line)
+            if (length(line)==0) next
+            if (substr(line,1,1)=="#") next
+            if (index(line,"=")==0) next
+            key=substr(line,1,index(line,"=")-1)
+            if (key !~ /^[A-Za-z_][A-Za-z0-9_]*$/) next
+            print line
+        }
+    ' < "${PROJECT_ROOT}/.env" > "${_SAFE_DOTENV}"
+    set -a
+    # shellcheck disable=SC1090
+    . "${_SAFE_DOTENV}"
+    set +a
+    rm -f "${_SAFE_DOTENV}"
+fi
+
+# 剥去可能被用户粘贴进去的引号（双引号/单引号/反引号），然后再显式 export 一遍，
+# 确保 supervisor 的 %(ENV_XXX)s 取到的是"干净值"，不会把引号带进去。
+_NORMALIZE_KEYS=(LLM_BASE_URL LLM_API_KEY LLM_MODEL LLM_TEMPERATURE LLM_TIMEOUT DASHSCOPE_API_KEY MIRROR_MODE HF_ENDPOINT USE_MODELSCOPE HF_HOME HF_HUB_DISABLE_TELEMETRY)
+for _k in "${_NORMALIZE_KEYS[@]}"; do
+    _v="${!_k:-}"
+    if [ "${#_v}" -ge 2 ]; then
+        case "${_v}" in
+            \"*\"|\'*\'|\`*\`)
+                _v="${_v:1:${#_v}-2}"
+                ;;
+        esac
+    fi
+    export "${_k}=${_v}"
+    # 同时生成前缀 ENV_* 版本，供 ini 中 %(ENV_XXX)s 显式引用
+    export "ENV_${_k}=${_v}"
+done
+unset _NORMALIZE_KEYS _k _v _SAFE_DOTENV
+
 # 创建必要目录
 mkdir -p "${PROJECT_ROOT}/data/run" "${LOG_DIR}"
 
