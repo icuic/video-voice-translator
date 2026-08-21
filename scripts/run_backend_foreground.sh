@@ -23,8 +23,40 @@ _force_inject_llm_env_and_log() {
     local line key value
     local -a WANTED_KEYS=(
         LLM_BASE_URL LLM_API_KEY LLM_MODEL LLM_TEMPERATURE LLM_TIMEOUT DASHSCOPE_API_KEY
+        MIRROR_MODE HF_ENDPOINT USE_MODELSCOPE
     )
+    # 第一层：用 set -a + source 让 bash 把 .env 里的所有键都自动导出到当前 shell，
+    # 这是避免子 shell while-read 丢变量的最可靠方式。
     if [ -f "${env_file}" ]; then
+        # 用子 shell 先清理文件中的注释/空行再 source，避免 source 执行到奇怪的行
+        local _safe_src
+        _safe_src=$(mktemp /tmp/vvt-dotenv-safe.XXXXXX)
+        awk '
+            BEGIN { FS="=" }
+            {
+                line=$0
+                sub(/^[ \t]+/, "", line)
+                sub(/[ \t\r]+$/, "", line)
+                if (length(line)==0) next
+                if (substr(line,1,1)=="#") next
+                if (index(line,"=")==0) next
+                # 只保留符合 VAR=VALUE 的行，避免 source 执行到 shell 命令
+                key=substr(line,1,index(line,"=")-1)
+                if (key !~ /^[A-Za-z_][A-Za-z0-9_]*$/) next
+                print line
+            }
+        ' < "${env_file}" > "${_safe_src}"
+        set -a
+        # shellcheck disable=SC1090
+        . "${_safe_src}"
+        set +a
+        rm -f "${_safe_src}"
+    fi
+
+    # 第二层：再手写解析一遍，把两端引号（双引号/单引号/反引号）剥掉。
+    #   因为上面的 . "${_safe_src}" 遇到 VALUE="'xxx'" 这种嵌套引号会保留外壳引号。
+    if [ -f "${env_file}" ]; then
+        # 使用进程替换避免 while-read 在子 shell 里丢变量
         while IFS= read -r line || [ -n "${line}" ]; do
             line="${line#"${line%%[![:space:]]*}"}"
             line="${line%"${line##*[![:space:]]}"}"
@@ -45,14 +77,13 @@ _force_inject_llm_env_and_log() {
                 esac
             fi
             case "${key}" in
-                LLM_BASE_URL|LLM_API_KEY|LLM_MODEL|LLM_TEMPERATURE|LLM_TIMEOUT|DASHSCOPE_API_KEY)
+                LLM_BASE_URL|LLM_API_KEY|LLM_MODEL|LLM_TEMPERATURE|LLM_TIMEOUT|DASHSCOPE_API_KEY|MIRROR_MODE|HF_ENDPOINT|USE_MODELSCOPE)
+                    eval "${key}=\${value}"
+                    export "${key}"
                     ;;
                 *) continue ;;
             esac
-            if [ -z "${!key:-}" ]; then
-                eval "export ${key}=\"\${value}\""
-            fi
-        done < "${env_file}"
+        done < <(cat "${env_file}")
     fi
 
     local k masked
