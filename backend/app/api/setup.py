@@ -161,6 +161,25 @@ class SetupApplyRequest(BaseModel):
         return s
 
 
+def _normalize_env_value(v: Any) -> str:
+    """规范化 .env 写入的 value：
+
+    - 空值返回空字符串；
+    - 字符串两端空白剥离；
+    - 两端都是同一种引号（"..." / '...' / 误写的反引号 `...`）时统一剥离引号，
+      避免 shell 加载阶段出现命令替换/变量展开的副作用；
+    - 其他情况原样返回字符串形式。
+    """
+    if v is None:
+        return ""
+    s = str(v).strip()
+    if len(s) >= 2:
+        ends = (s[0], s[-1])
+        if ends in (('"', '"'), ("'", "'"), ("`", "`")):
+            s = s[1:-1].strip()
+    return s
+
+
 def _render_env(req: SetupApplyRequest) -> str:
     old = _parse_env()
     lines: List[str] = []
@@ -168,17 +187,22 @@ def _render_env(req: SetupApplyRequest) -> str:
     lines.append("# 详细配置说明：docs/ENV_ADVANCED.md")
     lines.append("")
     lines.append("# 必填：OpenAI 兼容 LLM 配置（/v1/chat/completions）")
-    lines.append(f"LLM_BASE_URL={req.llm_base_url}")
-    lines.append(f"LLM_API_KEY={req.llm_api_key}")
-    lines.append(f"LLM_MODEL={req.llm_model}")
+    llm_base_url = _normalize_env_value(req.llm_base_url)
+    llm_api_key = _normalize_env_value(req.llm_api_key)
+    llm_model = _normalize_env_value(req.llm_model)
+    llm_temperature = _normalize_env_value(req.llm_temperature) if req.llm_temperature else ""
+    llm_timeout = _normalize_env_value(req.llm_timeout) if req.llm_timeout else ""
+    lines.append(f"LLM_BASE_URL={llm_base_url}")
+    lines.append(f"LLM_API_KEY={llm_api_key}")
+    lines.append(f"LLM_MODEL={llm_model}")
     lines.append("")
     lines.append("# 可选：LLM 调优参数（留空走代码默认值）")
-    if req.llm_temperature:
-        lines.append(f"LLM_TEMPERATURE={req.llm_temperature}")
+    if llm_temperature:
+        lines.append(f"LLM_TEMPERATURE={llm_temperature}")
     else:
         lines.append("# LLM_TEMPERATURE=0.1")
-    if req.llm_timeout:
-        lines.append(f"LLM_TIMEOUT={req.llm_timeout}")
+    if llm_timeout:
+        lines.append(f"LLM_TIMEOUT={llm_timeout}")
     else:
         lines.append("# LLM_TIMEOUT=300")
     lines.append("")
@@ -188,16 +212,16 @@ def _render_env(req: SetupApplyRequest) -> str:
     # 优先写回镜像相关变量
     for k in ["MIRROR_MODE", "HF_ENDPOINT", "USE_MODELSCOPE"]:
         if k in old and old[k]:
-            lines.append(f"{k}={old[k]}")
+            lines.append(f"{k}={_normalize_env_value(old[k])}")
             written.add(k)
     for k in ["UV_DEFAULT_INDEX", "NPM_REGISTRY", "NODE_SETUP_URL", "UV_HTTP_TIMEOUT"]:
         if k in old and old[k]:
-            lines.append(f"{k}={old[k]}")
+            lines.append(f"{k}={_normalize_env_value(old[k])}")
             written.add(k)
-    # 离线模式相关（保留注释形式，以注释或原值
+    # 离线模式相关（保留注释形式）
     for k in ["HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"]:
         if k in old and old[k]:
-            lines.append(f"# {k}={old[k]}")
+            lines.append(f"# {k}={_normalize_env_value(old[k])}")
             written.add(k)
     # 兜底默认值
     if "MIRROR_MODE" not in written:

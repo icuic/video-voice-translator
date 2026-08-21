@@ -14,6 +14,9 @@ from .output_manager import OutputManager, StepNumbers
 
 # 加载 .env（DASHSCOPE_API_KEY / HF_ENDPOINT 等）
 # 必须在 os.getenv("DASHSCOPE_API_KEY") 之前调用。
+# 二级加载兜底：先尝试项目内的 dotenv_loader；失败则尝试 python-dotenv，
+# 并且最后如果关键环境变量仍为空，再显式从 PROJECT_ROOT/.env 加载一次，
+# 防止 supervisor/docker 下 launch 脚本忘记 source setup_env.sh 导致翻译期“明明写了 .env 却读不到”。
 try:
     from .dotenv_loader import load_project_env  # type: ignore
     load_project_env()
@@ -23,6 +26,73 @@ except Exception:
         load_dotenv()
     except Exception:
         pass
+
+
+def _dotenv_reload_from_project_root_if_missing() -> None:
+    """如果关键 LLM env 为空，强制从 PROJECT_ROOT/.env 再 load 一遍。
+
+    在真实部署中曾经触发过：supervisor 启动链路里 setup_env.sh 的 load_dotenv 没有成功 export
+    LLM_*（比如用户误写反引号包裹 URL，或 shell 启动方式差异），导致 os.getenv 取不到但磁盘 .env
+    明明正确。这里做一个 Python 侧纯字面量解析的二次兜底，把这种“文件写入成功但进程环境未同步”
+    的误判率降到最低。
+    """
+    critical_keys = ("LLM_BASE_URL", "LLM_API_KEY", "DASHSCOPE_API_KEY")
+    already_set = any((os.getenv(k) or "").strip() for k in critical_keys)
+    if already_set:
+        return
+
+    project_root = os.getenv("PROJECT_ROOT")
+    env_file: Optional[Path] = None
+    if project_root:
+        candidate = Path(project_root) / ".env"
+        if candidate.is_file():
+            env_file = candidate
+    if env_file is None:
+        # 回退：从项目内包的位置向上探测（也兼容 PYTHONPATH 方式直接 import 本模块的场景）
+        for parent in (Path(__file__).resolve().parent, Path(os.getcwd()).resolve()):
+            for candidate in (parent, parent.parent, parent.parent.parent):
+                f = candidate / ".env"
+                if f.is_file():
+                    env_file = f
+                    break
+            if env_file:
+                break
+    if env_file is None:
+        return
+
+    # 优先使用 python-dotenv（它自带更完善的多行/引号处理）
+    loaded = False
+    try:
+        from dotenv import load_dotenv as _load_dotenv_fn  # type: ignore
+        loaded = bool(_load_dotenv_fn(dotenv_path=str(env_file), override=False, verbose=False))
+    except Exception:
+        loaded = False
+
+    # 若 python-dotenv 不可用或返回 False，用自己的最小解析器再兜一次
+    if not loaded:
+        try:
+            raw = env_file.read_text(encoding="utf-8")
+            for raw_line in raw.splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+                if len(value) >= 2:
+                    ends = (value[0], value[-1])
+                    if ends == ('"', '"') or ends == ("'", "'") or ends == ("`", "`"):
+                        value = value[1:-1]
+                if not key or not key.replace("_", "").isalnum() or not key[0].isalpha() and key[0] != "_":
+                    continue
+                if (os.getenv(key) or "").strip():
+                    continue
+                os.environ[key] = value
+        except Exception:
+            return
+
+
+_dotenv_reload_from_project_root_if_missing()
 
 
 class TextTranslator:
