@@ -19,9 +19,23 @@ from pydantic import BaseModel, Field, field_validator
 
 router = APIRouter(tags=["setup"])
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 ENV_FILE = PROJECT_ROOT / ".env"
 MANAGE_SCRIPT = PROJECT_ROOT / "manage-supervisor.sh"
+
+# 结构记忆：parents 索引层级
+# Path(".../backend/app/api/setup.py").resolve()
+#   parents[0] = backend/app/api
+#   parents[1] = backend/app
+#   parents[2] = backend
+#   parents[3] = 项目根（video-voice-translator/）✅
+# 手动确认：
+assert (PROJECT_ROOT / "manage-supervisor.sh").is_file(), (
+    f"PROJECT_ROOT 算错！当前 PROJECT_ROOT={PROJECT_ROOT}，找不到 manage-supervisor.sh"
+)
+assert (PROJECT_ROOT / ".env.example").is_file(), (
+    f"PROJECT_ROOT 算错！找不到 .env.example 在 {PROJECT_ROOT}"
+)
 
 MIRROR_VARS: List[str] = [
     "MIRROR_MODE",
