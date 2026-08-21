@@ -88,6 +88,15 @@ if [[ "$RUN_AS_ROOT" == "1" ]]; then
     chown -R vvt:vvt /app /app/data /app/env "${HOST_DATA_DIR}" "${HOST_ENV_DIR}" 2>/dev/null || true
     log_ok "挂载卷归属已切到 vvt（UID=999）"
 fi
+# 权限兜底：用户可能在 docker run 时用 -u $(id -u) 或之前源码模式留下 root 属主的 .env
+#   - .env 用 666 保证任何 UID 都能读写（Web setup API / configure.sh 都能写）
+#   - data/ 目录 + 所有子文件 777，保证 uploads/logs/outputs 能被翻译进程写入
+chmod 0666 /app/.env "${HOST_ENV_DIR}/.env" "${HOST_ENV_DIR}/.env.latest" 2>/dev/null || true
+chmod -R u+rwX,g+rwX,o+rwX /app/data "${HOST_DATA_DIR}" 2>/dev/null || true
+# 兼容：/app/.env 可能是软链，要保证软链指向的目标也被 chmod（宿主机卷里的那个 .env）
+if [[ -L /app/.env ]]; then
+    chmod 0666 "$(readlink -f /app/.env)" 2>/dev/null || true
+fi
 
 # --------------------------------------------------------
 # C. 如果前端已有 dist 产物，优先走 vite preview 静态服务器(8080)
@@ -119,6 +128,8 @@ log_info "前端地址: http://<宿主机IP>:${FRONTEND_PORT}   后端 API: http
 log_info "注意：supervisord 及所有子进程(FastAPI/Vite/Whisper/XTTS) 已用 gosu 以 vvt 用户运行"
 
 if [[ "$RUN_AS_ROOT" == "1" ]]; then
+    # 最后一道保险：切用户前保证 /app 下所有文件都归 vvt
+    chown -R 999:999 /app 2>/dev/null || true
     # 最稳的做法：supervisord 由 vvt 跑，不允许 supervisord 有 root
     exec gosu vvt /usr/bin/supervisord -c /app/supervisor/supervisord.conf -n
 else

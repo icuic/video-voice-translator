@@ -85,8 +85,14 @@ export function SetupPage({ onConfigured, allowSkip = false }: SetupPageProps) {
         restart,
       });
       setResult(r);
-      if (r.saved && (!restart || r.restart_result?.restarted)) {
-        window.setTimeout(() => onConfigured(), restart ? 2500 : 300);
+      // 关键修复：只要后端返回 saved=true，就代表 .env 已经写入成功
+      // 服务重启失败（restarted=false）只作为 warning 信息展示在成功区，不阻止切回主页
+      // 用户端看到保存成功后，即使服务没重启，也可以手动刷新或下次启动时读到新配置
+      if (r.saved) {
+        const delay = restart ? 2500 : 300;
+        window.setTimeout(() => onConfigured(), delay);
+      } else {
+        setError('后端返回保存失败，请查看错误详情');
       }
     } catch (e: any) {
       const detail = e?.response?.data;
@@ -97,6 +103,8 @@ export function SetupPage({ onConfigured, allowSkip = false }: SetupPageProps) {
           else if (Array.isArray(detail.detail)) {
             msg = detail.detail.map((x: any) => `${x.loc?.join('.') || ''}: ${x.msg}`).join('; ');
           }
+        } else if (typeof detail === 'object' && Object.keys(detail).length > 0) {
+          try { msg = JSON.stringify(detail, null, 2); } catch { /* ignore */ }
         }
       }
       setError(msg);

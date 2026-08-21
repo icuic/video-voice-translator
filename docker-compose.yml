@@ -29,6 +29,8 @@
 
 services:
   vvt:
+    # ENTRYPOINT 阶段必须是 root，才能修挂载卷的属主和权限；entrypoint 最后会 gosu 切到 UID=999 的 vvt 用户跑所有业务进程
+    user: root
     # 同时支持 ghcr.io（默认免费公共镜像）和 TCR 内网加速
     image: "${VVT_IMAGE:-ghcr.io/icuic/video-voice-translator:latest}"
     container_name: vvt

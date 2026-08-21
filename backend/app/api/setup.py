@@ -227,6 +227,43 @@ def _restart_supervisor() -> Dict[str, Any]:
         return {"restarted": False, "message": f"重启失败：{e}", "code": -2}
 
 
+def _diagnose_write_error(env_path: Path, project_root: Path) -> str:
+    """当 .env 写入失败时，返回对用户友好的诊断信息（用户名/UID/权限/父目录属主）。"""
+    import getpass
+    parts = []
+    parts.append("无法写入 .env，请排查以下权限问题：")
+    parts.append(f"  - 当前进程用户名: {getpass.getuser()}  UID: {os.getuid()}  GID: {os.getgid()}")
+    parts.append(f"  - 目标文件: {env_path}")
+    parts.append(f"  - 父目录: {project_root}")
+    try:
+        st = project_root.stat()
+        import pwd, grp
+        owner = pwd.getpwuid(st.st_uid).pw_name if st.st_uid < 65536 and __import__('pwd').getpwuid(st.st_uid) else str(st.st_uid)
+        try: group = grp.getgrgid(st.st_gid).gr_name
+        except Exception: group = str(st.st_gid)
+        parts.append(f"  - 父目录权限: {oct(st.st_mode & 0o777)}  属主: {owner}:{group}")
+    except Exception as e:
+        parts.append(f"  - [stat 父目录失败] {e}")
+    if env_path.exists():
+        try:
+            st = env_path.stat()
+            import pwd, grp
+            try: owner = pwd.getpwuid(st.st_uid).pw_name
+            except Exception: owner = str(st.st_uid)
+            try: group = grp.getgrgid(st.st_gid).gr_name
+            except Exception: group = str(st.st_gid)
+            parts.append(f"  - .env 已存在，权限: {oct(st.st_mode & 0o777)}  属主: {owner}:{group}")
+            parts.append(f"  - 当前用户是否可写: {'是' if os.access(env_path, os.W_OK) else '否（关键！）'}")
+        except Exception as e:
+            parts.append(f"  - [stat .env 失败] {e}")
+    else:
+        parts.append(f"  - .env 尚未创建，父目录是否可写: {'是' if os.access(project_root, os.W_OK) else '否（关键！）'}")
+    parts.append("")
+    parts.append("常见修复方式：")
+    parts.append("  - Docker 部署：在宿主机执行 `sudo chown -R 999:999 /home/ubuntu/video-voice-translator/vvt-env /home/ubuntu/video-voice-translator/vvt-data`")
+    parts.append("  - 源码部署：在项目根执行 `sudo chown -R $(whoami):$(whoami) . && chmod u+w . .env 2>/dev/null || true`")
+    return "\n".join(parts)
+
 @router.post("/setup/apply")
 def apply_setup(req: SetupApplyRequest) -> Dict[str, Any]:
     """写入 .env 并可选重启服务。"""
@@ -234,21 +271,26 @@ def apply_setup(req: SetupApplyRequest) -> Dict[str, Any]:
     if not PROJECT_ROOT.exists():
         raise HTTPException(status_code=500, detail=f"项目根目录不存在: {PROJECT_ROOT}")
     if not os.access(PROJECT_ROOT, os.W_OK):
-        raise HTTPException(status_code=500, detail=f"项目根目录不可写，无法写入 .env")
+        raise HTTPException(status_code=500, detail=_diagnose_write_error(ENV_FILE, PROJECT_ROOT))
 
     content = _render_env(req)
     # 先写入临时文件，再原子替换，防止半写导致损坏
-    fd, tmp_path = tempfile.mkstemp(prefix=".env.", dir=str(PROJECT_ROOT))
+    try:
+        fd, tmp_path = tempfile.mkstemp(prefix=".env.", dir=str(PROJECT_ROOT))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=_diagnose_write_error(ENV_FILE, PROJECT_ROOT) + f"\n[创建临时文件失败] {e}")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(content)
         os.replace(tmp_path, ENV_FILE)
-    except Exception:
+    except HTTPException:
+        raise
+    except Exception as e:
         try:
             os.unlink(tmp_path)
         except OSError:
             pass
-        raise
+        raise HTTPException(status_code=500, detail=_diagnose_write_error(ENV_FILE, PROJECT_ROOT) + f"\n[写入错误] {type(e).__name__}: {e}")
 
     result: Dict[str, Any] = {
         "saved": True,
