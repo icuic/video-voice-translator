@@ -16,7 +16,7 @@
 > 购买时在「应用名称」下拉框中选择官方 **「PyTorch 2.x / 3.x」** 基础镜像即可。启动后 SSH 登录，粘贴下方一行命令自动安装：
 >
 > ```bash
-> bash -c "$(curl -fsSL https://raw.githubusercontent.com/video-voice-translator/video-voice-translator/main/hai-deploy.sh)"
+> bash -c "$(curl -fsSL https://raw.githubusercontent.com/icuic/video-voice-translator/master/hai-deploy.sh)"
 > ```
 >
 > 完整部署教程参见：[腾讯云 HAI 部署指南](docs/HAI_DEPLOY.md)

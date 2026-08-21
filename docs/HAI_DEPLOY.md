@@ -67,13 +67,13 @@ ssh ubuntu@<你的实例公网IP>
 登录成功后，直接在终端粘贴下面的命令并回车：
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/video-voice-translator/video-voice-translator/main/hai-deploy.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/icuic/video-voice-translator/master/hai-deploy.sh)"
 ```
 
 **国内加速备用（如果 GitHub 下载慢，用这个）：**
 
 ```bash
-bash -c "$(curl -fsSL https://ghproxy.com/https://raw.githubusercontent.com/video-voice-translator/video-voice-translator/main/hai-deploy.sh)"
+bash -c "$(curl -fsSL https://ghproxy.com/https://raw.githubusercontent.com/icuic/video-voice-translator/master/hai-deploy.sh)"
 ```
 
 ### 3.3 部署脚本自动完成以下工作

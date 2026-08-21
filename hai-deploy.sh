@@ -8,13 +8,13 @@
 #       写入 MOTD 欢迎横幅 → 启动后端/前端服务」。
 #
 # 用法（一行命令，推荐 bash 执行）：
-#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/video-voice-translator/video-voice-translator/main/hai-deploy.sh)"
+#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/icuic/video-voice-translator/master/hai-deploy.sh)"
 #
 # 国内加速镜像（ghproxy 代理）：
-#   bash -c "$(curl -fsSL https://ghproxy.com/https://raw.githubusercontent.com/video-voice-translator/video-voice-translator/main/hai-deploy.sh)"
+#   bash -c "$(curl -fsSL https://ghproxy.com/https://raw.githubusercontent.com/icuic/video-voice-translator/master/hai-deploy.sh)"
 #
 # 无 curl 用 wget：
-#   wget -O - https://raw.githubusercontent.com/video-voice-translator/video-voice-translator/main/hai-deploy.sh | bash
+#   wget -O - https://raw.githubusercontent.com/icuic/video-voice-translator/master/hai-deploy.sh | bash
 #
 # 本地调试（项目目录内）：
 #   ./hai-deploy.sh --local
@@ -35,8 +35,8 @@ log_warn()    { echo -e "${COLOR_YELLOW}[WARN]${COLOR_RESET} $*"; }
 log_error()   { echo -e "${COLOR_RED}[ERR] ${COLOR_RESET} $*" >&2; }
 log_section() { echo ""; echo -e "${COLOR_BOLD}${COLOR_CYAN}▶ $*${COLOR_RESET}"; echo ""; }
 
-REPO_DEFAULT="https://github.com/video-voice-translator/video-voice-translator.git"
-BRANCH_DEFAULT="main"
+REPO_DEFAULT="https://github.com/icuic/video-voice-translator.git"
+BRANCH_DEFAULT="master"
 INSTALL_DIR_DEFAULT="${HOME}/video-voice-translator"
 
 LOCAL_MODE=0

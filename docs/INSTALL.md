@@ -10,7 +10,7 @@
 
 > 💡 **腾讯云 HAI 部署说明**：选择「HAI-GPU进阶型」V100 32GB 套餐，应用名称选官方「PyTorch 2.x/3.x」基础镜像。SSH 登录后粘贴：
 > ```bash
-> bash -c "$(curl -fsSL https://raw.githubusercontent.com/video-voice-translator/video-voice-translator/main/hai-deploy.sh)"
+> bash -c "$(curl -fsSL https://raw.githubusercontent.com/icuic/video-voice-translator/master/hai-deploy.sh)"
 > ```
 > 全部自动完成，然后打开 `http://<实例公网IP>:8080` 即可（首次访问自动跳配置页填 3 项 LLM 信息）。完整图文：[HAI 部署指南](HAI_DEPLOY.md)
 
