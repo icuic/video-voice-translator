@@ -25,21 +25,59 @@ RUN npm run build 2>&1 | tail -10
 # ---- Stage 2: 最终运行镜像 ----
 FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04 AS runtime
 
+# ---- 构建期参数：作者本机 build 时传入，解决 docker 容器内 apt DNS 失败 / 公网源慢的问题 ----
+#      支持: tencent-intranet | tencent | china | official
+#      - tencent-intranet: mirrors.tencentyun.com（仅腾讯云内网可访问，作者 build 机在腾讯云 HAI 时用）
+#      - tencent: mirrors.cloud.tencent.com（公网）
+#      - china: mirrors.tuna.tsinghua.edu.cn（清华公网兜底）
+#      - official: archive.ubuntu.com（默认）
+ARG APT_MIRROR=auto
+
 # ---- 基础系统依赖（最小化安装以控制镜像体积，不装 sudo 减少攻击面） ----
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update -y -q \
- && apt-get install -y -q --no-install-recommends \
+
+# APT 源切换（build 时应用，不污染镜像里的 source.list——用户自己进容器 apt 时用官方源更稳）
+RUN set -eux; \
+    case "${APT_MIRROR}" in \
+        tencent-intranet) \
+            sed -i 's|http://archive.ubuntu.com/ubuntu/|http://mirrors.tencentyun.com/ubuntu/|g' /etc/apt/sources.list; \
+            sed -i 's|http://security.ubuntu.com/ubuntu/|http://mirrors.tencentyun.com/ubuntu/|g' /etc/apt/sources.list; \
+            # NVIDIA CUDA 仓库在腾讯内网经常解析失败，直接禁用 nvidia/cuda 的额外 apt 源（基础镜像里已经带 cuda runtime 了，不需要它）
+            rm -f /etc/apt/sources.list.d/*.list 2>/dev/null || true; \
+            ;; \
+        tencent) \
+            sed -i 's|http://archive.ubuntu.com/ubuntu/|http://mirrors.cloud.tencent.com/ubuntu/|g' /etc/apt/sources.list; \
+            sed -i 's|http://security.ubuntu.com/ubuntu/|http://mirrors.cloud.tencent.com/ubuntu/|g' /etc/apt/sources.list; \
+            rm -f /etc/apt/sources.list.d/*.list 2>/dev/null || true; \
+            ;; \
+        china) \
+            sed -i 's|http://archive.ubuntu.com/ubuntu/|http://mirrors.tuna.tsinghua.edu.cn/ubuntu/|g' /etc/apt/sources.list; \
+            sed -i 's|http://security.ubuntu.com/ubuntu/|http://mirrors.tuna.tsinghua.edu.cn/ubuntu/|g' /etc/apt/sources.list; \
+            rm -f /etc/apt/sources.list.d/*.list 2>/dev/null || true; \
+            ;; \
+        *) \
+            # auto / official: 不改源，但把 nvidia 源移除避免 DNS 失败（基础镜像里已有 cuda）
+            rm -f /etc/apt/sources.list.d/*.list 2>/dev/null || true; \
+            ;; \
+    esac; \
+    # retry 3 次 apt-get update，避免瞬断
+    for i in 1 2 3; do \
+        if apt-get update -y -q; then break; fi; \
+        echo "[apt] update 第 $i 次失败，10s 后重试..." >&2; \
+        sleep 10; \
+    done; \
+    apt-get install -y -q --no-install-recommends \
         ca-certificates curl wget unzip ffmpeg rsync supervisor \
         python3 python3-venv python3-pip \
         git tzdata locales bash-completion gosu \
-        libsndfile1 libgomp1 libsox-dev sox \
- && rm -rf /var/lib/apt/lists/* \
- && locale-gen en_US.UTF-8 zh_CN.UTF-8 2>/dev/null || true \
- && ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
- && echo "Asia/Shanghai" > /etc/timezone \
- && groupadd -r -g 999 vvt \
- && useradd -r -u 999 -g vvt -s /bin/bash -d /app vvt \
- && gosu nobody true
+        libsndfile1 libgomp1 libsox-dev sox; \
+    rm -rf /var/lib/apt/lists/*; \
+    locale-gen en_US.UTF-8 zh_CN.UTF-8 2>/dev/null || true; \
+    ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime; \
+    echo "Asia/Shanghai" > /etc/timezone; \
+    groupadd -r -g 999 vvt; \
+    useradd -r -u 999 -g vvt -s /bin/bash -d /app vvt; \
+    gosu nobody true
 
 ENV LANG=zh_CN.UTF-8 \
     LC_ALL=zh_CN.UTF-8 \

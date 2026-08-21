@@ -159,6 +159,27 @@ SIZE_VENV=$(du -sh "${PROJECT_ROOT}/index-tts/.venv" | awk '{print $1}')
 SIZE_CKPT=$(du -sh "${PROJECT_ROOT}/index-tts/checkpoints" | awk '{print $1}')
 log_info ".venv = ${SIZE_VENV},  checkpoints = ${SIZE_CKPT}"
 
+# ---- 1.2) 自动选构建期 apt 镜像源（解决 docker 容器内 apt DNS 失败 / 公网慢的问题） ----
+#      优先级: APT_MIRROR env 覆盖 > CLI --apt-mirror > tencent-intranet(能 ping 通就用) > tencent > china > official
+APT_MIRROR_AUTO="official"
+if [[ -z "${APT_MIRROR:-}" ]] && command -v curl >/dev/null 2>&1; then
+    if (curl -fsSL --max-time 3 http://mirrors.tencentyun.com/ubuntu/ >/dev/null 2>&1); then
+        APT_MIRROR_AUTO="tencent-intranet"
+    elif (curl -fsSL --max-time 5 https://mirrors.cloud.tencent.com/ubuntu/ >/dev/null 2>&1); then
+        APT_MIRROR_AUTO="tencent"
+    elif (curl -fsSL --max-time 5 https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ >/dev/null 2>&1); then
+        APT_MIRROR_AUTO="china"
+    fi
+fi
+BUILD_APT_MIRROR="${APT_MIRROR:-${APT_MIRROR_AUTO}}"
+log_info "Docker 构建期 APT 镜像源: ${BUILD_APT_MIRROR}"
+
+# ---- 1.3) build 日志策略：实时写 /tmp/vvt-build.log + 终端 tail -f（避免 tail -60 看起来像卡住） ----
+BUILD_LOG="/tmp/vvt-build-$(date +%s).log"
+: > "${BUILD_LOG}"
+log_info "构建日志实时写入: ${BUILD_LOG}，终端同时实时显示（避免像卡住）"
+
+
 # ---- 1.5) 统一 docker 调用：若普通 docker 连不上 daemon，则自动加 sudo ----
 #      HAI 默认 ubuntu 用户不在 docker 组，usermod 要重登录生效，build 期间直接 sudo 最稳。
 DOCKER_SUDO=""
@@ -214,8 +235,17 @@ run_docker ${BUILD_CMD} \
     --file Dockerfile \
     --tag "${TMP_TAG}" \
     --build-arg "BUILD_VERSION=${VERSION}" \
+    --build-arg "APT_MIRROR=${BUILD_APT_MIRROR}" \
     "${BUILD_EXTRA_ARGS[@]}" \
-    "${PROJECT_ROOT}" 2>&1 | tail -60
+    "${PROJECT_ROOT}" 2>&1 | tee -a "${BUILD_LOG}" | tail -n +1
+
+BUILD_RC=${PIPESTATUS[0]}
+if [[ "${BUILD_RC}" != "0" ]]; then
+    log_error "Docker build 失败（返回码 ${BUILD_RC}）。完整日志见 ${BUILD_LOG}，最后 60 行："
+    tail -60 "${BUILD_LOG}"
+    log_warn "也可以跳过 build 直接跳过镜像部署（hai-deploy.sh 有源码 install.sh 兜底，用户端 10~20 分钟出页）。"
+    exit 1
+fi
 
 log_ok "本地镜像构建完成: ${TMP_TAG}"
 
