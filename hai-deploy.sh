@@ -123,7 +123,10 @@ ensure_os_deps() {
         if command -v apt-get >/dev/null 2>&1; then
             (
                 set +e
-                sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends docker.io docker-compose-v2 2>/dev/null
+                sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends docker.io docker-compose-v2 containerd 2>/dev/null
+                sudo systemctl enable docker 2>/dev/null || true
+                sudo systemctl start docker 2>/dev/null || true
+                sleep 2
             ) || true
         fi
         if ! command -v docker >/dev/null 2>&1; then
@@ -132,6 +135,14 @@ ensure_os_deps() {
         else
             # 免 sudo docker（把当前用户加进 docker 组，重新登录生效；本次部署用 sudo 兜底）
             sudo usermod -aG docker "$(whoami)" 2>/dev/null || true
+            # 统一：当前用户无 docker 权限时统一加 sudo（部署期间免重新登录）
+            if ! (docker info >/dev/null 2>&1); then
+                if ! (sudo -n docker info >/dev/null 2>&1); then
+                    # 若 sudo 也连不上（daemon 没起来），尝试重启
+                    sudo systemctl restart docker 2>/dev/null || true
+                    sleep 3
+                fi
+            fi
         fi
     else
         log_success "Docker 已就绪: $(docker -v 2>/dev/null)"
@@ -221,14 +232,44 @@ deploy_with_docker() {
     log_section "路径 A：使用 Docker 预打包镜像（首选，最快 3~8 分钟）"
     cd "${PROJECT_ROOT}"
 
+    # ---- 统一 docker 调用：当前用户无权限则自动加 sudo ----
+    #      HAI 默认 ubuntu 不在 docker 组，usermod 要重登录生效，部署期间直接 sudo 最稳
+    local DOCKER_SUDO=""
+    if ! (docker info >/dev/null 2>&1); then
+        if (sudo -n docker info >/dev/null 2>&1); then
+            DOCKER_SUDO="sudo"
+            log_info "当前用户无 docker 权限，自动改用 sudo docker"
+        fi
+    fi
+    run_docker() {
+        if [[ -n "$DOCKER_SUDO" ]]; then
+            $DOCKER_SUDO docker "$@"
+        else
+            docker "$@"
+        fi
+    }
+    run_compose() {
+        # docker compose v2 命令前加同样的 sudo 前缀
+        if [[ -n "$DOCKER_SUDO" ]]; then
+            $DOCKER_SUDO docker compose "$@"
+        else
+            docker compose "$@"
+        fi
+    }
+
     # docker compose v2 是否可用
-    local dc="docker compose"
-    if ! (docker compose version >/dev/null 2>&1); then
+    local dc_available=1
+    if ! (run_compose version >/dev/null 2>&1); then
         if command -v docker-compose >/dev/null 2>&1; then
-            dc="docker-compose"
+            # docker-compose 独立二进制，也同样判断是否加 sudo
+            if ! (docker-compose version >/dev/null 2>&1) && [[ -n "$DOCKER_SUDO" ]]; then
+                DOCKER_COMPOSE_BIN="sudo docker-compose"
+            else
+                DOCKER_COMPOSE_BIN="docker-compose"
+            fi
         else
             log_warn "docker compose v2 不可用，尝试手动 docker run"
-            dc=""
+            dc_available=0
         fi
     fi
 
@@ -242,17 +283,10 @@ deploy_with_docker() {
         # --- Step 1: pull（带进度，静默除最后几行） --
         local pull_start
         pull_start=$(date +%s)
-        if sudo -n true 2>/dev/null; then
-            set +e
-            sudo docker pull "${IMAGE}" 2>&1 | tail -5
-            local rc=${PIPESTATUS[0]}
-            set -e
-        else
-            set +e
-            docker pull "${IMAGE}" 2>&1 | tail -5
-            local rc=${PIPESTATUS[0]}
-            set -e
-        fi
+        set +e
+        run_docker pull "${IMAGE}" 2>&1 | tail -5
+        local rc=${PIPESTATUS[0]}
+        set -e
         local pull_end
         pull_end=$(date +%s)
         if [[ "$rc" != "0" ]]; then
@@ -263,14 +297,14 @@ deploy_with_docker() {
 
         # --- Step 2: 根据可用工具启动容器 --
         set +e
-        if [[ -n "$dc" && -f "${PROJECT_ROOT}/docker-compose.yml" ]]; then
+        if [[ "$dc_available" == "1" && -f "${PROJECT_ROOT}/docker-compose.yml" ]]; then
             log_info "使用 docker-compose 启动（docker-compose.yml 已配置端口/卷/GPU）"
-            VVT_IMAGE="${IMAGE}" $dc up -d 2>&1 | tail -10
+            VVT_IMAGE="${IMAGE}" run_compose up -d 2>&1 | tail -10
             rc=$?
         else
             log_info "回退 docker run 直接启动"
-            sudo docker rm -f vvt 2>/dev/null || true
-            sudo docker run -d \
+            run_docker rm -f vvt 2>/dev/null || true
+            run_docker run -d \
                 --name vvt \
                 --gpus all \
                 --restart unless-stopped \

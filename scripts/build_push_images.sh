@@ -75,8 +75,38 @@ TCR_REGION="${TCR_REGION:-ap-guangzhou}"
 # ---- 环境检查 ----
 log_section "环境检查"
 if ! command -v docker >/dev/null 2>&1; then
-    log_error "未安装 docker，请先安装 docker + nvidia-container-toolkit（HAI 默认自带）"
-    exit 1
+    log_warn "未检测到 docker，尝试自动通过 apt 安装（当前 HAI PyTorch 基础镜像通常自带，如未自带则需 ~3 分钟）..."
+    set +e
+    sudo DEBIAN_FRONTEND=noninteractive apt-get update -y -q 2>&1 | tail -3
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+        docker.io docker-compose-v2 containerd nvidia-container-toolkit 2>&1 | tail -10
+    set -e
+    if command -v docker >/dev/null 2>&1; then
+        sudo systemctl enable docker 2>/dev/null || true
+        sudo systemctl restart docker 2>/dev/null || true
+        sudo usermod -aG docker "$(whoami)" 2>/dev/null || true
+        log_ok "Docker 已自动安装: $(docker -v 2>/dev/null)"
+        log_warn "注意：usermod 加 docker 组需要重新登录生效，本次 build 命令全部加 sudo 兜底"
+    else
+        log_error "自动安装 docker 失败，请手动执行：sudo apt-get install -y docker.io docker-compose-v2 nvidia-container-toolkit"
+        exit 1
+    fi
+fi
+# 再兜底测一次 sudo docker 可用（免重新登录）
+if ! (sudo docker info >/dev/null 2>&1); then
+    log_error "sudo docker info 无法连接 docker daemon，尝试重启：sudo systemctl restart docker"
+    sudo systemctl restart docker 2>/dev/null || true
+    sleep 3
+    if ! (sudo docker info >/dev/null 2>&1); then
+        log_error "Docker daemon 仍不可用，请手动排查后再试"
+        exit 1
+    fi
+fi
+# nvidia 运行时可用就不报错，build 阶段可以走 CPU-only（镜像体积稍大但功能一致）
+if sudo docker info 2>/dev/null | grep -q nvidia; then
+    log_ok "Docker nvidia runtime 已就绪"
+else
+    log_warn "未检测到 nvidia runtime，将用常规运行时构建镜像（用户 HAI 实例端运行时仍需 GPU）"
 fi
 for DIR in index-tts/.venv index-tts/checkpoints; do
     if [[ ! -d "${PROJECT_ROOT}/${DIR}" ]]; then
@@ -87,6 +117,23 @@ done
 SIZE_VENV=$(du -sh "${PROJECT_ROOT}/index-tts/.venv" | awk '{print $1}')
 SIZE_CKPT=$(du -sh "${PROJECT_ROOT}/index-tts/checkpoints" | awk '{print $1}')
 log_info ".venv = ${SIZE_VENV},  checkpoints = ${SIZE_CKPT}"
+
+# ---- 1.5) 统一 docker 调用：若普通 docker 连不上 daemon，则自动加 sudo ----
+#      HAI 默认 ubuntu 用户不在 docker 组，usermod 要重登录生效，build 期间直接 sudo 最稳。
+DOCKER_SUDO=""
+if ! (docker info >/dev/null 2>&1); then
+    if (sudo -n docker info >/dev/null 2>&1); then
+        DOCKER_SUDO="sudo"
+        log_info "当前用户无 docker 权限，自动改用 sudo docker"
+    fi
+fi
+run_docker() {
+    if [[ -n "$DOCKER_SUDO" ]]; then
+        $DOCKER_SUDO docker "$@"
+    else
+        docker "$@"
+    fi
+}
 
 # ---- 1) Dockerfile 语法预检查（快速失败） ----
 log_section "Dockerfile 语法预检"
@@ -101,7 +148,7 @@ TMP_TAG="vvt:build-${VERSION}-$(date +%s)"
 export DOCKER_BUILDKIT=1
 export BUILDKIT_PROGRESS=plain
 
-docker build \
+run_docker build \
     --file Dockerfile \
     --tag "${TMP_TAG}" \
     --build-arg "BUILD_VERSION=${VERSION}" \
@@ -114,17 +161,18 @@ log_ok "本地镜像构建完成: ${TMP_TAG}"
 log_section "打 tag"
 declare -a TAGS=("${VERSION}" "latest")
 for t in "${TAGS[@]}"; do
-    docker tag "${TMP_TAG}" "${GHCR_IMAGE_BASE}:${t}"
+    run_docker tag "${TMP_TAG}" "${GHCR_IMAGE_BASE}:${t}"
     log_ok "本地 tag: ${GHCR_IMAGE_BASE}:${t}"
     if [[ "$SKIP_TCR" != "1" ]]; then
-        docker tag "${TMP_TAG}" "${TCR_IMAGE_BASE}:${t}"
+        run_docker tag "${TMP_TAG}" "${TCR_IMAGE_BASE}:${t}"
         log_ok "本地 tag: ${TCR_IMAGE_BASE}:${t}"
     fi
 done
 
 if [[ "$LOCAL_ONLY" == "1" ]]; then
     log_ok "--local-only 指定，跳过推送，本地镜像如下："
-    docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}" | grep -E "(icuic/video-voice|${TCR_NS:-vvt-public}|vvt:build)" | head -15
+    run_docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}" \
+        | grep -E "(icuic/video-voice|${TCR_NS:-vvt-public}|vvt:build)" | head -15
     exit 0
 fi
 
@@ -134,12 +182,12 @@ if [[ "$SKIP_GHCR" != "1" ]]; then
     if [[ -z "${GHCR_TOKEN:-}" ]]; then
         log_warn "GHCR_TOKEN 环境变量为空，跳过 ghcr.io 登录（假设已 docker login ghcr.io）"
     else
-        echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER:-icuic}" --password-stdin
+        echo "${GHCR_TOKEN}" | run_docker login ghcr.io -u "${GHCR_USER:-icuic}" --password-stdin
         log_ok "ghcr.io 登录成功"
     fi
     for t in "${TAGS[@]}"; do
         log_info "push ghcr.io :${t}"
-        docker push "${GHCR_IMAGE_BASE}:${t}" 2>&1 | tail -10
+        run_docker push "${GHCR_IMAGE_BASE}:${t}" 2>&1 | tail -10
         log_ok "✅ ${GHCR_IMAGE_BASE}:${t}"
     done
 fi
@@ -150,12 +198,12 @@ if [[ "$SKIP_TCR" != "1" ]]; then
     if [[ -z "${TCR_USER:-}" || -z "${TCR_PASS:-}" ]]; then
         log_warn "TCR_USER / TCR_PASS 未通过 env 注入，跳过登录（假设已 docker login ccr.ccs.tencentyun.com）"
     else
-        echo "${TCR_PASS}" | docker login ccr.ccs.tencentyun.com -u "${TCR_USER}" --password-stdin
+        echo "${TCR_PASS}" | run_docker login ccr.ccs.tencentyun.com -u "${TCR_USER}" --password-stdin
         log_ok "TCR 登录成功"
     fi
     for t in "${TAGS[@]}"; do
         log_info "push TCR :${t}"
-        docker push "${TCR_IMAGE_BASE}:${t}" 2>&1 | tail -10
+        run_docker push "${TCR_IMAGE_BASE}:${t}" 2>&1 | tail -10
         log_ok "✅ ${TCR_IMAGE_BASE}:${t}"
     done
 fi
