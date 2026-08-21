@@ -189,11 +189,32 @@ TMP_TAG="vvt:build-${VERSION}-$(date +%s)"
 export DOCKER_BUILDKIT=1
 export BUILDKIT_PROGRESS=plain
 
-run_docker build \
+# ---- 2.1) 判断 docker 构建能力：优先 buildx → 次选 BuildKit 原生 build（--progress 可选） → 最后 legacy builder ----
+BUILD_CMD="build"
+BUILD_EXTRA_ARGS=()
+# 1. 优先 docker buildx build（支持 --progress + 更稳的多阶段）
+if (run_docker buildx version >/dev/null 2>&1); then
+    BUILD_CMD="buildx build"
+    BUILD_EXTRA_ARGS=(--progress=plain --load)
+    log_info "检测到 docker buildx，使用 buildx build（更稳的多阶段构建）"
+else
+    # 2. 没有 buildx 就看 legacy build --help 里有没有 --progress（有的话可以开 plain）
+    if (run_docker build --help 2>/dev/null | grep -qw -- '--progress'); then
+        BUILD_EXTRA_ARGS=(--progress=plain)
+        log_info "docker build 原生支持 --progress，使用 plain 模式"
+    else
+        log_warn "当前 docker.io 是 legacy builder（无 --progress），跳过 BuildKit 特有参数，直接用普通 docker build"
+        # legacy builder 不认 DOCKER_BUILDKIT=1 的 --progress，但普通 build 一样能走多阶段 FROM=frontend-build
+        unset DOCKER_BUILDKIT
+        unset BUILDKIT_PROGRESS
+    fi
+fi
+
+run_docker ${BUILD_CMD} \
     --file Dockerfile \
     --tag "${TMP_TAG}" \
     --build-arg "BUILD_VERSION=${VERSION}" \
-    --progress=plain \
+    "${BUILD_EXTRA_ARGS[@]}" \
     "${PROJECT_ROOT}" 2>&1 | tail -60
 
 log_ok "本地镜像构建完成: ${TMP_TAG}"
