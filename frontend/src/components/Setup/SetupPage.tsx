@@ -87,10 +87,18 @@ export function SetupPage({ onConfigured, allowSkip = false }: SetupPageProps) {
       setResult(r);
       // 关键修复：只要后端返回 saved=true，就代表 .env 已经写入成功
       // 服务重启失败（restarted=false）只作为 warning 信息展示在成功区，不阻止切回主页
-      // 用户端看到保存成功后，即使服务没重启，也可以手动刷新或下次启动时读到新配置
       if (r.saved) {
         const delay = restart ? 2500 : 300;
-        window.setTimeout(() => onConfigured(), delay);
+        window.setTimeout(() => {
+          try {
+            onConfigured?.();
+          } catch (e) {
+            // 任何 onConfigured 抛错（路由守卫replaceState连锁、store初始化失败等）
+            // 都强制整页跳转，保证不白屏
+            console.error('[SetupPage] onConfigured throw, 强制 reload 跳 /', e);
+            window.location.href = '/';
+          }
+        }, delay);
       } else {
         setError('后端返回保存失败，请查看错误详情');
       }

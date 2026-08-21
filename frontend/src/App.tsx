@@ -38,19 +38,49 @@ function App() {
   const refreshSetupStatus = useCallback(async () => {
     try {
       const s: SetupStatus = await setupService.getStatus();
-      setLlmConfigured(s.configured);
+      try { setLlmConfigured(!!s?.configured); } catch (_) { /* noop */ }
     } catch (e) {
-      // 接口短暂不可用，不做硬阻塞
-      console.warn('setup/status 接口不可用，默认按未配置处理', e);
+      // 接口短暂不可用（vite/supervisor 重启时常见），不做硬阻塞，保持之前的 llmConfigured 状态
+      console.warn('setup/status 接口不可用，默认保持当前 llmConfigured 状态', e);
     }
   }, []);
 
   useEffect(() => {
+    // 白屏自动恢复：任何未捕获的 React/渲染错误/未处理 Promise rejection
+    // 都做一次可控 reload 跳回 /（避免用户看到永久白屏）
+    const reloadToHome = () => {
+      try {
+        if (window.location.pathname !== '/' || !window.location.search) {
+          window.location.replace('/');
+        } else {
+          window.location.reload();
+        }
+      } catch (_) {
+        window.location.href = '/';
+      }
+    };
+    const onUnhandledRejection = (e: PromiseRejectionEvent) => {
+      console.error('[App] Uncaught Promise rejection（白屏保护触发）:', e.reason);
+      // setup/apply 保存后 vite/supervisor 重启期间接口 502 是正常现象，不强制 reload
+      const reason = String(e?.reason ?? '');
+      if (reason.includes('setup/status') || reason.includes('Network Error') || reason.includes('502')) {
+        return;
+      }
+      // 1.5s 延迟：如果是 setup 期间的 502，白屏保护会被下一条 setState 覆盖
+      setTimeout(reloadToHome, 1500);
+    };
+    const onError = (e: ErrorEvent) => {
+      console.error('[App] Uncaught error（白屏保护触发）:', e.error || e.message);
+      setTimeout(reloadToHome, 1500);
+    };
+    window.addEventListener('unhandledrejection', onUnhandledRejection);
+    window.addEventListener('error', onError);
+
     const onHashOrPath = () => {
-      const p = window.location.pathname || '/';
-      if (p.replace(/\/+$/, '') === '/setup') {
-        setForceSetup(true);
-      } else {
+      try {
+        const p = (window.location.pathname || '/').replace(/\/+$/, '');
+        setForceSetup(p === '/setup');
+      } catch (_) {
         setForceSetup(false);
       }
     };
@@ -58,18 +88,33 @@ function App() {
     window.addEventListener('popstate', onHashOrPath);
     (async () => {
       await refreshSetupStatus();
-      setBootstrapping(false);
+      try { setBootstrapping(false); } catch (_) { /* noop */ }
     })();
-    return () => window.removeEventListener('popstate', onHashOrPath);
+    return () => {
+      window.removeEventListener('popstate', onHashOrPath);
+      window.removeEventListener('unhandledrejection', onUnhandledRejection);
+      window.removeEventListener('error', onError);
+    };
   }, [refreshSetupStatus]);
 
   const handleSetupDone = useCallback(() => {
-    setForceSetup(false);
-    void refreshSetupStatus().finally(() => {
-      if (window.location.pathname.replace(/\/+$/, '') === '/setup') {
-        window.history.replaceState({}, '', '/');
+    // 关键修复：把 setState + replaceState 全部推到下一个 event loop 做
+    // 避免 React 19 批量更新导致同一同步堆栈里「replaceState → popstate 监听器 → 再 setState → 再 render」
+    // 造成 useSegmentStore / VideoPlayer 等子组件连锁抛错而白屏
+    window.setTimeout(() => {
+      try {
+        setForceSetup(false);
+        void refreshSetupStatus().finally(() => {
+          if (window.location.pathname.replace(/\/+$/, '') === '/setup') {
+            window.history.replaceState({}, '', '/');
+          }
+        });
+      } catch (e) {
+        // 任何 setState/replaceState 抛错直接硬跳 /，保证不白屏
+        console.error('[App:handleSetupDone] 路由或状态更新失败，强制 reload 跳 /', e);
+        window.location.href = '/';
       }
-    });
+    }, 0);
   }, [refreshSetupStatus]);
 
   // /setup 路径 或 未配置 或 强制进入 -> 显示 SetupPage
