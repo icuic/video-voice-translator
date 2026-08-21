@@ -21,8 +21,13 @@ PID_FILE="${PROJECT_ROOT}/data/run/supervisord.pid"
 LOG_DIR="${PROJECT_ROOT}/data/logs/supervisor"
 
 # 环境变量注入给 supervisord 配置（供 %(ENV_XXX)s 语法对应 shell 中 XXX）
+# 说明：ini 文件中用的是 %(ENV_PROJECT_ROOT)s / %(ENV_USER)s，
+# 因此我们既要 export PROJECT_ROOT / USER，也要 export 前缀版 ENV_PROJECT_ROOT / ENV_USER，
+# 防止 restart 时 supervisord 重新读取配置导致 ENV_PROJECT_ROOT 为空，command 变成空路径崩溃
 export PROJECT_ROOT="${PROJECT_ROOT}"
 export USER="$(id -un)"
+export ENV_PROJECT_ROOT="${PROJECT_ROOT}"
+export ENV_USER="${USER}"
 
 # 创建必要目录
 mkdir -p "${PROJECT_ROOT}/data/run" "${LOG_DIR}"
