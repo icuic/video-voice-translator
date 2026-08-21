@@ -234,6 +234,34 @@ def _render_env(req: SetupApplyRequest) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _env_llm_core(env: Dict[str, str]) -> Dict[str, str]:
+    """取出影响后端是否需要重启的核心 LLM 配置子集，用于比较磁盘 .env 是否发生有效变化。"""
+    core: Dict[str, str] = {}
+    for k in (
+        "LLM_BASE_URL",
+        "LLM_API_KEY",
+        "LLM_MODEL",
+        "LLM_TEMPERATURE",
+        "LLM_TIMEOUT",
+        "DASHSCOPE_API_KEY",
+    ):
+        v = (env.get(k) or "").strip()
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in ('"', "'", '`'):
+            v = v[1:-1].strip()
+        core[k] = v
+    return core
+
+
+def _append_restart_trigger_log(message: str) -> None:
+    try:
+        Path(PROJECT_ROOT / "data" / "logs" / "supervisor").mkdir(parents=True, exist_ok=True)
+        with open(f"{PROJECT_ROOT}/data/logs/supervisor/restart-trigger.log", "a", encoding="utf-8") as fh:
+            stamp = __import__("datetime").datetime.now().astimezone().isoformat(timespec="seconds")
+            fh.write(f"[{stamp}] [setup-api] {message}\n")
+    except Exception:
+        pass
+
+
 def _schedule_restart_backend_later(delay_seconds: float = 1.5) -> None:
     """把后端重启"延迟+完全脱离当前 uvicorn 进程"地触发，防止自杀式重启竞态。
 
@@ -349,15 +377,25 @@ def _diagnose_write_error(env_path: Path, project_root: Path) -> str:
 
 @router.post("/setup/apply")
 def apply_setup(req: SetupApplyRequest) -> Dict[str, Any]:
-    """写入 .env 并可选重启服务。"""
-    # 保证项目根目录可写
+    """写入 .env 并可选重启服务。
+
+    重启策略（避免用户说『明明保存成功了但翻译还是报未配置』）：
+      1. 保存前先读旧 .env 的核心 LLM 子集；
+      2. 保存后再读新 .env 的核心 LLM 子集；
+      3. 若子集有变化，**无论请求体 req.restart 是否为 false，都强制排程异步重启 backend**；
+         （req.restart=false 仅在"内容完全未变化"时生效，用来避免无意义刷新服务）
+      4. 若子集完全一致，但 req.restart=true，仍按显式请求执行重启。
+    并把每一步决策都写到 restart-trigger.log，方便肉眼验证。
+    """
     if not PROJECT_ROOT.exists():
         raise HTTPException(status_code=500, detail=f"项目根目录不存在: {PROJECT_ROOT}")
     if not os.access(PROJECT_ROOT, os.W_OK):
         raise HTTPException(status_code=500, detail=_diagnose_write_error(ENV_FILE, PROJECT_ROOT))
 
+    old_env = _parse_env()
+    old_core = _env_llm_core(old_env)
+
     content = _render_env(req)
-    # 先写入临时文件，再原子替换，防止半写导致损坏
     try:
         fd, tmp_path = tempfile.mkstemp(prefix=".env.", dir=str(PROJECT_ROOT))
     except Exception as e:
@@ -375,13 +413,39 @@ def apply_setup(req: SetupApplyRequest) -> Dict[str, Any]:
             pass
         raise HTTPException(status_code=500, detail=_diagnose_write_error(ENV_FILE, PROJECT_ROOT) + f"\n[写入错误] {type(e).__name__}: {e}")
 
+    new_env = _parse_env()
+    new_core = _env_llm_core(new_env)
+    core_changed = old_core != new_core
+
+    user_explicit_restart = bool(req.restart)
+    should_schedule_restart = core_changed or user_explicit_restart
+
+    _append_restart_trigger_log(
+        "POST /api/setup/apply 决策: "
+        f"core_changed={core_changed} user_req.restart={user_explicit_restart} "
+        f"→ should_schedule_restart={should_schedule_restart} "
+        f"(diff keys: {sorted(set(k for k in new_core if old_core.get(k) != new_core.get(k)) or ['<none>'])})"
+    )
+
     result: Dict[str, Any] = {
         "saved": True,
         "env_file": str(ENV_FILE),
-        "restart": req.restart,
+        "restart": should_schedule_restart,
+        "core_changed": core_changed,
+        "user_requested_restart": user_explicit_restart,
     }
-    if req.restart:
+
+    if should_schedule_restart:
         result["restart_result"] = _restart_supervisor()
+        _append_restart_trigger_log(
+            "已排程异步重启 backend。restart_result.restarted="
+            f"{bool(result.get('restart_result', {}).get('restarted'))}"
+        )
     else:
-        result["restart_result"] = {"restarted": False, "message": "用户跳过重启，需手动执行 ./manage-supervisor.sh restart", "code": None}
+        result["restart_result"] = {
+            "restarted": False,
+            "message": "核心 LLM 配置未变化，跳过重启以避免打断当前翻译任务。如需手动重启请执行 ./manage-supervisor.sh restart-backend。",
+            "code": None,
+        }
+        _append_restart_trigger_log("跳过重启：核心 LLM 配置未变化，且用户未显式请求重启。")
     return result

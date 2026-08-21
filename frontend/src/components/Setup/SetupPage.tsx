@@ -76,19 +76,25 @@ export function SetupPage({ onConfigured, allowSkip = false }: SetupPageProps) {
     }
     setSubmitting(true);
     try {
+      // 关键：无论页面上"保存后重启"开关是否勾选，我们都默认发 restart=true 给后端；
+      // 后端 apply 端点内部会再做一层强校验：只有当核心 LLM 配置（BASE_URL/API_KEY/MODEL/TEMPERATURE/TIMEOUT/DASHSCOPE）
+      // 真正发生变化时，才会强制排程重启 backend。如果内容完全没变，后端自己会跳过重启。
+      // 这样可以彻底避免"前端误把 restart 变成 false/undefined → 保存后 backend 环境没更新 → 翻译继续报未配置"。
+      const payloadRestart = true;
       const r = await setupService.apply({
         llm_base_url: baseUrl.trim(),
         llm_api_key: apiKey.trim(),
         llm_model: model.trim(),
         llm_temperature: temperature.trim() || undefined,
         llm_timeout: timeout.trim() || undefined,
-        restart,
+        restart: payloadRestart,
       });
       setResult(r);
       if (r.saved) {
+        const willRestart = Boolean(r.restart);
         const waitForBackend = async () => {
-          const hardDeadline = Date.now() + (restart ? 90_000 : 5_000);
-          const initialDelay = restart ? 3500 : 200;
+          const hardDeadline = Date.now() + (willRestart ? 120_000 : 8_000);
+          const initialDelay = willRestart ? 3500 : 200;
           let backoff = 1200;
           await new Promise((res) => setTimeout(res, initialDelay));
           while (Date.now() < hardDeadline) {
@@ -111,8 +117,7 @@ export function SetupPage({ onConfigured, allowSkip = false }: SetupPageProps) {
             backoff = Math.round(backoff * 1.25);
             await new Promise((res) => setTimeout(res, waitMs));
           }
-          // 兜底：90s 后即便后端没成功回来（比如进程真的起不来），也不要卡死在 SetupPage，
-          // 强制整页跳 / ，让 ErrorBoundary / 全局 reload 兜底再给一次机会。
+          // 兜底：即便后端真的起不来，也不要卡死在 SetupPage
           try { window.location.href = '/'; } catch (_) { /* noop */ }
         };
         void waitForBackend();
