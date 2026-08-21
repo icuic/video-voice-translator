@@ -1,0 +1,81 @@
+# ============================================================
+# AI 音视频翻译系统 - docker-compose.yml
+# 适合小白用户：一行 `docker compose up -d` 或 hai-deploy.sh 直接调用
+#
+# 端口说明（默认）：
+#   8080  → 前端 Web UI（vite preview 静态服务器）
+#   8000  → 后端 FastAPI（Swagger: http://<IP>:8000/docs）
+#   5173  → 前端 dev server（如果 dist 不存在时 fallback）
+#
+# 卷说明（都自动绑定宿主机当前目录的子目录，容器删除不丢数据）：
+#   ./vvt-data  → /app/data（上传/输出/日志/缓存）
+#   ./vvt-env   → /app/env（.env 存放 LLM 三件套）
+#
+# GPU 支持：
+#   deploy.resources.reservations.devices."nvidia"  = GPU 全部卡
+#   如果宿主机没 GPU，注释掉 deploy 段即可（CPU 模式能跑但是会很慢）
+#
+# 使用示例：
+#   # 首次启动（或每次新版本升级）
+#   docker compose pull
+#   docker compose up -d
+#
+#   # 看日志
+#   docker compose logs -f
+#
+#   # 停止
+#   docker compose down
+# ============================================================
+
+services:
+  vvt:
+    # 同时支持 ghcr.io（默认免费公共镜像）和 TCR 内网加速
+    image: "${VVT_IMAGE:-ghcr.io/icuic/video-voice-translator:latest}"
+    container_name: vvt
+    restart: unless-stopped
+    # 镜像拉取策略：always 保证每次 up -d 都检查最新 tag
+    pull_policy: always
+    ports:
+      - "8080:8080"       # 前端 Web UI（静态 preview，推荐生产访问）
+      - "8000:8000"       # 后端 FastAPI + Swagger 文档
+      - "5173:5173"       # 前端 dev server（fallback 用）
+    environment:
+      - TZ=Asia/Shanghai
+      - DEV_MODE=0
+      - BACKEND_HOST=0.0.0.0
+      - BACKEND_PORT=8000
+      - FRONTEND_HOST=0.0.0.0
+      - FRONTEND_PORT=8080
+      - ENV_PROJECT_ROOT=/app
+      - PROJECT_ROOT=/app
+      - INDEX_TTS_DIR=/app/index-tts
+      - HOST_ENV_DIR=/app/env
+      - HOST_DATA_DIR=/app/data
+    volumes:
+      # 卷 1：翻译结果 / 上传文件 / 日志（容器删除不丢）
+      - ./vvt-data:/app/data
+      # 卷 2：.env 用户配置（LLM Key、镜像源等）
+      - ./vvt-env:/app/env
+    # GPU 资源声明（必需）
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # 健康检查：后端 health 接口
+    healthcheck:
+      test: ["CMD", "curl", "-fsSL", "--max-time", "5", "http://127.0.0.1:8000/health"]
+      interval: 60s
+      timeout: 10s
+      retries: 5
+      start_period: 120s   # 首次启动给足 2 分钟加载 Whisper 和 TTS 模型
+    cap_add:
+      - SYS_PTRACE          # 部分 GPU 驱动调试需要
+    security_opt:
+      - seccomp=unconfined  # 允许部分音视频处理 syscall
+    shm_size: '8gb'         # Whisper / TTS 推理共享内存要大（默认 64MB 不够）
+    ulimits:
+      memlock: -1
+      stack: 67108864

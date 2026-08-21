@@ -1,0 +1,177 @@
+#!/bin/bash
+# ============================================================
+# AI 音视频翻译系统 - 作者专用 Docker 镜像构建 & 推送脚本
+#
+# 用法：
+#   # 1) 准备凭据（只需做一次）
+#        GitHub Token (PAT)：有 write:packages 权限 -> export GHCR_TOKEN=xxx
+#        TCR 个人版用户名/密码：export TCR_USER=xxx TCR_PASS=xxx TCR_NS=xxx TCR_REGION=ap-guangzhou
+#
+#   # 2) 构建并打多个 tag
+#        ./scripts/build_push_images.sh v1.0.0        # 构建 + 同时推 ghcr.io + TCR
+#        ./scripts/build_push_images.sh v1.0.0 --local-only   # 只构建本地镜像，不推送
+#        ./scripts/build_push_images.sh v1.0.0 --skip-tcr      # 跳过 TCR，只推 ghcr.io（推荐新手省事儿）
+#        ./scripts/build_push_images.sh v1.0.0 --skip-ghcr     # 跳过 ghcr.io，只推 TCR
+#
+# 前置要求：
+#   - Docker 19.03+ （支持 BuildKit）
+#   - nvidia-docker（GPU 驱动已装，HAI 默认自带）
+#   - 当前实例上已经完整跑过 install.sh，index-tts/.venv + checkpoints 已经在本地
+#   - 前端 build 过（dist 目录存在，否则 Dockerfile Stage 1 现场 build 也行）
+#
+# 镜像体积估算：~15-18GB（.venv 9G + checkpoints 11G，层压缩后）
+# ============================================================
+
+set -euo pipefail
+
+COLOR_BOLD='\033[1m'
+COLOR_GREEN='\033[32m'
+COLOR_YELLOW='\033[33m'
+COLOR_RED='\033[31m'
+COLOR_CYAN='\033[36m'
+COLOR_RESET='\033[0m'
+
+log_info()    { echo -e "${COLOR_CYAN}[build]${COLOR_RESET} $*"; }
+log_ok()      { echo -e "${COLOR_GREEN}[OK] ${COLOR_RESET} $*"; }
+log_warn()    { echo -e "${COLOR_YELLOW}[WARN]${COLOR_RESET} $*"; }
+log_error()   { echo -e "${COLOR_RED}[ERR]${COLOR_RESET} $*" >&2; }
+log_section() { echo ""; echo -e "${COLOR_BOLD}${COLOR_CYAN}▶ $*${COLOR_RESET}"; echo ""; }
+
+# ---- 参数解析 ----
+if [[ $# -lt 1 ]]; then
+    cat <<'HELP'
+用法: ./scripts/build_push_images.sh <VERSION> [--local-only] [--skip-tcr] [--skip-ghcr]
+  <VERSION>            版本号，如 v1.0.0
+  --local-only         只构建本地镜像，不推送任何远端
+  --skip-tcr           跳过腾讯云 TCR（只推 ghcr.io）
+  --skip-ghcr          跳过 ghcr.io（只推 TCR）
+HELP
+    exit 1
+fi
+
+VERSION="$1"; shift
+SKIP_TCR=0
+SKIP_GHCR=0
+LOCAL_ONLY=0
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --local-only) LOCAL_ONLY=1; shift ;;
+        --skip-tcr)   SKIP_TCR=1;   shift ;;
+        --skip-ghcr)  SKIP_GHCR=1;  shift ;;
+        -h|--help)    sed -n '2,18p' "$0"; exit 0 ;;
+        *)            log_error "未知参数: $1"; exit 1 ;;
+    esac
+done
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+cd "${PROJECT_ROOT}"
+
+# ---- 默认镜像元数据（改这里为你的实际信息） ----
+GHCR_IMAGE_BASE="${GHCR_IMAGE_BASE:-ghcr.io/icuic/video-voice-translator}"
+TCR_IMAGE_BASE="${TCR_IMAGE_BASE:-ccr.ccs.tencentyun.com/${TCR_NS:-vvt-public}/video-voice-translator}"
+TCR_REGION="${TCR_REGION:-ap-guangzhou}"
+
+# ---- 环境检查 ----
+log_section "环境检查"
+if ! command -v docker >/dev/null 2>&1; then
+    log_error "未安装 docker，请先安装 docker + nvidia-container-toolkit（HAI 默认自带）"
+    exit 1
+fi
+for DIR in index-tts/.venv index-tts/checkpoints; do
+    if [[ ! -d "${PROJECT_ROOT}/${DIR}" ]]; then
+        log_error "目录 ${PROJECT_ROOT}/${DIR} 不存在，必须先运行 ./install.sh 下载模型和 .venv"
+        exit 1
+    fi
+done
+SIZE_VENV=$(du -sh "${PROJECT_ROOT}/index-tts/.venv" | awk '{print $1}')
+SIZE_CKPT=$(du -sh "${PROJECT_ROOT}/index-tts/checkpoints" | awk '{print $1}')
+log_info ".venv = ${SIZE_VENV},  checkpoints = ${SIZE_CKPT}"
+
+# ---- 1) Dockerfile 语法预检查（快速失败） ----
+log_section "Dockerfile 语法预检"
+if command -v hadolint >/dev/null 2>&1; then
+    hadolint Dockerfile || log_warn "hadolint 有 lint 告警，忽略继续"
+fi
+log_ok "Dockerfile 文件就绪"
+
+# ---- 2) 构建镜像 ----
+log_section "开始构建镜像 version=${VERSION}（预计 15~30 分钟，取决于 IO 速度）"
+TMP_TAG="vvt:build-${VERSION}-$(date +%s)"
+export DOCKER_BUILDKIT=1
+export BUILDKIT_PROGRESS=plain
+
+docker build \
+    --file Dockerfile \
+    --tag "${TMP_TAG}" \
+    --build-arg "BUILD_VERSION=${VERSION}" \
+    --progress=plain \
+    "${PROJECT_ROOT}" 2>&1 | tail -60
+
+log_ok "本地镜像构建完成: ${TMP_TAG}"
+
+# ---- 3) 打额外 tag（latest + 版本号） ----
+log_section "打 tag"
+declare -a TAGS=("${VERSION}" "latest")
+for t in "${TAGS[@]}"; do
+    docker tag "${TMP_TAG}" "${GHCR_IMAGE_BASE}:${t}"
+    log_ok "本地 tag: ${GHCR_IMAGE_BASE}:${t}"
+    if [[ "$SKIP_TCR" != "1" ]]; then
+        docker tag "${TMP_TAG}" "${TCR_IMAGE_BASE}:${t}"
+        log_ok "本地 tag: ${TCR_IMAGE_BASE}:${t}"
+    fi
+done
+
+if [[ "$LOCAL_ONLY" == "1" ]]; then
+    log_ok "--local-only 指定，跳过推送，本地镜像如下："
+    docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}" | grep -E "(icuic/video-voice|${TCR_NS:-vvt-public}|vvt:build)" | head -15
+    exit 0
+fi
+
+# ---- 4A) Push ghcr.io ----
+if [[ "$SKIP_GHCR" != "1" ]]; then
+    log_section "推送至 GitHub Container Registry（ghcr.io）"
+    if [[ -z "${GHCR_TOKEN:-}" ]]; then
+        log_warn "GHCR_TOKEN 环境变量为空，跳过 ghcr.io 登录（假设已 docker login ghcr.io）"
+    else
+        echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER:-icuic}" --password-stdin
+        log_ok "ghcr.io 登录成功"
+    fi
+    for t in "${TAGS[@]}"; do
+        log_info "push ghcr.io :${t}"
+        docker push "${GHCR_IMAGE_BASE}:${t}" 2>&1 | tail -10
+        log_ok "✅ ${GHCR_IMAGE_BASE}:${t}"
+    done
+fi
+
+# ---- 4B) Push TCR 个人版 ----
+if [[ "$SKIP_TCR" != "1" ]]; then
+    log_section "推送至腾讯云容器镜像服务 TCR 个人版（${TCR_REGION}）"
+    if [[ -z "${TCR_USER:-}" || -z "${TCR_PASS:-}" ]]; then
+        log_warn "TCR_USER / TCR_PASS 未通过 env 注入，跳过登录（假设已 docker login ccr.ccs.tencentyun.com）"
+    else
+        echo "${TCR_PASS}" | docker login ccr.ccs.tencentyun.com -u "${TCR_USER}" --password-stdin
+        log_ok "TCR 登录成功"
+    fi
+    for t in "${TAGS[@]}"; do
+        log_info "push TCR :${t}"
+        docker push "${TCR_IMAGE_BASE}:${t}" 2>&1 | tail -10
+        log_ok "✅ ${TCR_IMAGE_BASE}:${t}"
+    done
+fi
+
+# ---- 5) 摘要 ----
+log_section "✅ 构建 & 推送完成"
+echo ""
+echo "  版本号: ${VERSION}"
+echo "  本地标签: ${TMP_TAG}"
+if [[ "$SKIP_GHCR" != "1" ]]; then
+    echo "  ghcr.io  : ${GHCR_IMAGE_BASE}:${VERSION}   (用户 Docker 免费首选)"
+fi
+if [[ "$SKIP_TCR" != "1" ]]; then
+    echo "  TCR(内网): ${TCR_IMAGE_BASE}:${VERSION}   (HAI 内网拉取，2~3分钟)"
+fi
+echo ""
+echo "  小白部署入口命令（可复制到文档/Web 终端）:"
+echo "    bash -c \"\$(curl -fsSL https://ghproxy.com/https://raw.githubusercontent.com/icuic/video-voice-translator/master/hai-deploy.sh)\""
+echo ""

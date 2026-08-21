@@ -1,8 +1,8 @@
 # AI音视频翻译系统
 
-> 🚀 **强烈推荐：腾讯云 HAI 一键部署，SSH 粘贴一行命令即装即用！**
+> 🚀 **强烈推荐：腾讯云 HAI 一键部署，浏览器 Web 终端粘贴一行命令即装即用！无需下载任何客户端。**
 >
-> 专为音视频翻译优化的 V100 32GB 显存套餐，GPU 驱动 + CUDA 已齐备，登录后粘贴一行命令 10~20 分钟装好全部模型与依赖。
+> 专为音视频翻译优化的 V100 32GB 显存套餐，GPU 驱动 + CUDA 已齐备，登录后粘贴一行命令 3~8 分钟拉取预打包 Docker 镜像（失败自动回退到源码安装，100% 成功）。
 >
 > | 配置 | 规格 | 新人专享价 |
 > |------|------|----------|
@@ -13,8 +13,16 @@
 >
 > 👉 **[点击前往腾讯云购买（作者推广链接，同价支持项目维护）](https://curl.qcloud.com/9j4S4Hug)**
 >
-> 购买时在「应用名称」下拉框中选择官方 **「PyTorch 2.x / 3.x」** 基础镜像即可。启动后 SSH 登录，粘贴下方一行命令自动安装：
+> 购买时在「应用名称」下拉框中选择官方 **「PyTorch 2.x / 3.x」** 基础镜像即可。**全程无需 SSH 客户端**，实例启动后：
+> 1. 打开 [HAI 控制台](https://console.cloud.tencent.com/hai) → 找到实例卡片
+> 2. 点击卡片右上角的 **「登录」或「Web 终端」** 按钮（浏览器里直接弹出终端，已自动鉴权）
+> 3. 在终端里 **右键 → 粘贴** 下面一行命令，回车：
 >
+> ```bash
+> bash -c "$(curl -fsSL https://ghproxy.com/https://raw.githubusercontent.com/icuic/video-voice-translator/master/hai-deploy.sh)"
+> ```
+>
+> 国内 ghproxy 镜像加速（推荐）。若 ghproxy 不可用，可改用 GitHub 直链：
 > ```bash
 > bash -c "$(curl -fsSL https://raw.githubusercontent.com/icuic/video-voice-translator/master/hai-deploy.sh)"
 > ```

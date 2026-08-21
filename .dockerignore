@@ -1,0 +1,58 @@
+# ============================================================
+# .dockerignore
+# 防止把用户本地敏感信息、构建缓存、大文件的重复副本打包进镜像
+#
+# 注意：index-tts/.venv 和 index-tts/checkpoints **不在 ignore 中**，
+# 因为 Dockerfile 要显式 COPY 它们；.dockerignore 只排除非必要的内容。
+# ============================================================
+
+# Git
+.git
+.gitignore
+.gitattributes
+.github
+
+# 环境变量 & 密钥
+.env
+.venv
+.env.*.local
+
+# 缓存 & 临时产物
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 前端
+frontend/node_modules/.cache
+frontend/.vite
+frontend/dist
+# 注意：node_modules 本身我们要 COPY，所以不 ignore 整个 node_modules
+
+# 安装日志 & 数据目录（用户数据不进镜像）
+install_log*.txt
+data/uploads/*
+data/outputs/*
+data/temp/*
+data/logs/*
+!data/**/.gitkeep
+
+# IDE
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*.swo
+
+# 项目内 submodule 的 .venv 里的非必要文件（减少体积）
+index-tts/.venv/var/cache/
+index-tts/.venv/lib/python*/site-packages/pip/
+index-tts/.venv/lib/python*/site-packages/setuptools/
+index-tts/.venv/lib/python*/site-packages/wheel/
+index-tts/.cache/
+index-tts/__pycache__/
+index-tts/.git 2>/dev/null

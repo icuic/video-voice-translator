@@ -4,15 +4,19 @@
 
 | 部署方式 | 技术门槛 | 耗时 | 推荐人群 | 入口 |
 |---------|---------|-----|---------|------|
-| 🚀 **腾讯云 HAI 一行命令部署（首选）** | **极低**（仅需会 SSH 粘贴一行命令） | 10~20 分钟（全自动） | **所有用户**，新手友好 | [点击购买 PyTorch 基础镜像后粘贴一行命令](https://curl.qcloud.com/9j4S4Hug) |
+| 🚀 **腾讯云 HAI 一行命令部署（首选）** | **极低**（无需下载 SSH 客户端，浏览器 Web 终端右键粘贴一行命令） | **3~8 分钟**（Docker 预打包镜像，失败自动回退源码 10~20 分钟） | **所有用户**，新手最友好 | [点击购买 PyTorch 基础镜像后粘贴一行命令](https://curl.qcloud.com/9j4S4Hug) |
 | 腾讯云 ECS / 其他云服务器 手动安装 | 高（需会 Linux 命令行） | 1~3 小时 | 已有云服务器、想自定义配置的用户 | 见下文「一键安装」 |
-| 本地机器部署 | 极高（需有 NVIDIA GPU） | 3 小时以上 | 开发者 / 研究人员 / 有本地 GPU 的用户 | 见下文「手动安装」 |
+| 本地机器部署 | 极高（需有 NVIDIA GPU ≥ 8G 显存） | 3 小时以上 | 开发者 / 研究人员 / 有本地 GPU 的用户 | 见下文「手动安装」 |
 
-> 💡 **腾讯云 HAI 部署说明**：选择「HAI-GPU进阶型」V100 32GB 套餐，应用名称选官方「PyTorch 2.x/3.x」基础镜像。SSH 登录后粘贴：
+> 💡 **腾讯云 HAI 部署说明（新手推荐，完全零 SSH 知识）**：
+>
+> 1. 从 [推广链接](https://curl.qcloud.com/9j4S4Hug) 购买 **HAI-GPU进阶型 V100 32GB**（¥49/7天），应用名称选官方 **「PyTorch 2.x / 3.x」** 基础镜像
+> 2. 实例启动后，打开 [HAI 控制台](https://console.cloud.tencent.com/hai) → 点击实例卡片右上角 **「登录 / Web 终端」** 按钮（浏览器里直接开终端，免填 IP/密码）
+> 3. 在弹出的终端里右键 → 粘贴下面一行命令 → 回车，全自动完成：
 > ```bash
-> bash -c "$(curl -fsSL https://raw.githubusercontent.com/icuic/video-voice-translator/master/hai-deploy.sh)"
+> bash -c "$(curl -fsSL https://ghproxy.com/https://raw.githubusercontent.com/icuic/video-voice-translator/master/hai-deploy.sh)"
 > ```
-> 全部自动完成，然后打开 `http://<实例公网IP>:8080` 即可（首次访问自动跳配置页填 3 项 LLM 信息）。完整图文：[HAI 部署指南](HAI_DEPLOY.md)
+> 然后打开 `http://<实例公网IP>:8080` 即可（首次访问会自动跳到配置页手填 3 项 LLM 信息）。完整图文：[HAI 部署指南](HAI_DEPLOY.md)
 
 ---
 
