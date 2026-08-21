@@ -14,7 +14,14 @@ import { Segment } from './types/segment';
 import { TranslationTask } from './types/media';
 
 function App() {
+  // ==========================================================================
+  //  1. 所有 React hooks 必须集中在这里声明：custom hooks / useState / useRef
+  //  绝对不能在早期 if(...) return 之后再出现 hook 调用
+  //  否则违反 React Rules of Hooks → "Rendered more hooks than previous render"
+  // ==========================================================================
   const { segments, setSegments, updateSegment, deleteSegment } = useSegmentStore();
+
+  // --- 1.1 useState (16 个，一次性全部声明完) ------------------------------
   const [currentTime, setCurrentTime] = useState(0);
   const [videoSrc, setVideoSrc] = useState('');
   const [originalVideoUrl, setOriginalVideoUrl] = useState('');
@@ -29,25 +36,35 @@ function App() {
   const [translationTask, setTranslationTask] = useState<TranslationTask | null>(null);
   const [resynthesizedSegments, setResynthesizedSegments] = useState<Set<number>>(new Set());
   const [isRegenerating, setIsRegenerating] = useState(false);
+  const [isDraggingPlayhead, setIsDraggingPlayhead] = useState(false);
 
-  // --- 初始化 & 配置状态守卫 ------------------------------------------------
+  // --- 1.2 初始化 & 配置守卫 -----------------------------------------------
   const [bootstrapping, setBootstrapping] = useState(true);
   const [forceSetup, setForceSetup] = useState(false);
   const [llmConfigured, setLlmConfigured] = useState(false);
 
+  // --- 1.3 useRef (6 个，一次性全部声明完) -----------------------------------
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const regenerateCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const hasShownRegenerateAlertRef = useRef<boolean>(false);
+  const wasPlayingRef = useRef(false);
+
+  // ==========================================================================
+  //  2. 所有 useCallback / useEffect 都在这里声明（回调/副作用也不能出现在
+  //     早期 return 之后，因为它们本身就是 hooks）
+  // ==========================================================================
   const refreshSetupStatus = useCallback(async () => {
     try {
       const s: SetupStatus = await setupService.getStatus();
       try { setLlmConfigured(!!s?.configured); } catch (_) { /* noop */ }
     } catch (e) {
-      // 接口短暂不可用（vite/supervisor 重启时常见），不做硬阻塞，保持之前的 llmConfigured 状态
       console.warn('setup/status 接口不可用，默认保持当前 llmConfigured 状态', e);
     }
   }, []);
 
   useEffect(() => {
-    // 白屏自动恢复：任何未捕获的 React/渲染错误/未处理 Promise rejection
-    // 都做一次可控 reload 跳回 /（避免用户看到永久白屏）
+    // 白屏自动恢复兜底（ErrorBoundary 抓不到的 window 级未捕获错误）
     const reloadToHome = () => {
       try {
         if (window.location.pathname !== '/' || !window.location.search) {
@@ -61,12 +78,10 @@ function App() {
     };
     const onUnhandledRejection = (e: PromiseRejectionEvent) => {
       console.error('[App] Uncaught Promise rejection（白屏保护触发）:', e.reason);
-      // setup/apply 保存后 vite/supervisor 重启期间接口 502 是正常现象，不强制 reload
       const reason = String(e?.reason ?? '');
       if (reason.includes('setup/status') || reason.includes('Network Error') || reason.includes('502')) {
         return;
       }
-      // 1.5s 延迟：如果是 setup 期间的 502，白屏保护会被下一条 setState 覆盖
       setTimeout(reloadToHome, 1500);
     };
     const onError = (e: ErrorEvent) => {
@@ -98,9 +113,6 @@ function App() {
   }, [refreshSetupStatus]);
 
   const handleSetupDone = useCallback(() => {
-    // 关键修复：把 setState + replaceState 全部推到下一个 event loop 做
-    // 避免 React 19 批量更新导致同一同步堆栈里「replaceState → popstate 监听器 → 再 setState → 再 render」
-    // 造成 useSegmentStore / VideoPlayer 等子组件连锁抛错而白屏
     window.setTimeout(() => {
       try {
         setForceSetup(false);
@@ -110,39 +122,11 @@ function App() {
           }
         });
       } catch (e) {
-        // 任何 setState/replaceState 抛错直接硬跳 /，保证不白屏
         console.error('[App:handleSetupDone] 路由或状态更新失败，强制 reload 跳 /', e);
         window.location.href = '/';
       }
     }, 0);
   }, [refreshSetupStatus]);
-
-  // /setup 路径 或 未配置 或 强制进入 -> 显示 SetupPage
-  const shouldShowSetup = !bootstrapping && (forceSetup || !llmConfigured);
-  if (bootstrapping) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-900 to-slate-900 flex items-center justify-center p-4">
-        <div className="text-white text-lg flex items-center gap-3">
-          <svg className="animate-spin w-6 h-6" viewBox="0 0 24 24" fill="none">
-            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25" />
-            <path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
-          </svg>
-          正在初始化...
-        </div>
-      </div>
-    );
-  }
-  if (shouldShowSetup) {
-    return <SetupPage onConfigured={handleSetupDone} allowSkip={forceSetup} />;
-  }
-  
-  // 计算待重新生成的分段数量
-  const pendingRegenerateCount = resynthesizedSegments.size;
-
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-  const regenerateCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null); // 存储重新生成检查的定时器引用
-  const hasShownRegenerateAlertRef = useRef<boolean>(false); // 标记是否已经显示过重新生成完成的提示
 
   // 根据当前选择的视频源更新实际播放的 src
   useEffect(() => {
@@ -156,7 +140,6 @@ function App() {
   // WebSocket 连接，用于接收重新合成完成通知
   useEffect(() => {
     if (!taskId) {
-      // 如果没有任务ID，关闭现有连接
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
@@ -165,12 +148,10 @@ function App() {
     }
 
     const connectWebSocket = () => {
-      // 如果已有连接，先关闭
       if (wsRef.current) {
         wsRef.current.close();
       }
 
-      // 建立 WebSocket 连接
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const wsUrl = `${protocol}//${window.location.host}/api/websocket/${taskId}`;
       const ws = new WebSocket(wsUrl);
@@ -186,22 +167,14 @@ function App() {
           if (data.type === 'resynthesize_complete') {
             const segmentId = data.segment_id;
             console.log('收到重新合成完成通知:', segmentId);
-
-            // 更新按钮状态
             setIsResynthesizing(prev => ({ ...prev, [segmentId]: false }));
-
-            // 重新加载分段列表，确保获取最新的音频路径
-            // 注意：只更新音频路径，避免覆盖用户的翻译文本修改
             segmentService.getSegments(taskId).then(updatedSegments => {
-              // 合并更新：保留前端状态中的翻译文本，只更新音频相关字段
               const mergedSegments = segments.map(existingSegment => {
                 const updatedSegment = updatedSegments.find(s => s.id === existingSegment.id);
                 if (updatedSegment) {
                   return {
                     ...updatedSegment,
-                    // 保留用户手动修改的翻译文本
                     translated_text: existingSegment.translated_text || updatedSegment.translated_text,
-                    // 更新音频路径等后端生成的内容
                     cloned_audio_path: updatedSegment.cloned_audio_path,
                     original_duration: updatedSegment.original_duration,
                     cloned_duration: updatedSegment.cloned_duration,
@@ -227,26 +200,48 @@ function App() {
       ws.onclose = (event) => {
         console.log('WebSocket 连接已关闭，原因:', event.code, event.reason);
         wsRef.current = null;
-
-        // 如果是非正常关闭（不是组件卸载导致的），尝试重连
         if (event.code !== 1000 && event.code !== 1001) {
           console.log('尝试重连WebSocket...');
-          setTimeout(connectWebSocket, 2000); // 2秒后重试
+          setTimeout(connectWebSocket, 2000);
         }
       };
     };
 
-    // 初始连接
     connectWebSocket();
-
-    // 清理函数
     return () => {
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
       }
     };
-  }, [taskId]);
+  }, [taskId, segments, setSegments, setIsResynthesizing]);
+
+  // ==========================================================================
+  //  3. 纯常量计算（非 hooks，可以安全出现在任何位置）
+  // ==========================================================================
+  const pendingRegenerateCount = resynthesizedSegments.size;
+  const shouldShowSetup = !bootstrapping && (forceSetup || !llmConfigured);
+
+  // ==========================================================================
+  //  4. 早期 return 必须放在所有 hooks 声明全部完成之后！
+  //     （这里之后绝不能再出现任何 useState/useRef/useEffect/useCallback/custom hook）
+  // ==========================================================================
+  if (bootstrapping) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-900 to-slate-900 flex items-center justify-center p-4">
+        <div className="text-white text-lg flex items-center gap-3">
+          <svg className="animate-spin w-6 h-6" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25" />
+            <path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
+          </svg>
+          正在初始化...
+        </div>
+      </div>
+    );
+  }
+  if (shouldShowSetup) {
+    return <SetupPage onConfigured={handleSetupDone} allowSkip={forceSetup} />;
+  }
 
   // 轮询任务状态（使用递归setTimeout实现动态间隔）
   const pollTaskStatus = async (tid: string, pollCount = 0) => {
@@ -401,9 +396,6 @@ function App() {
   };
 
   // 处理时间轴跳转（简化版本：直接更新视频，不通过复杂的状态管理）
-  const [isDraggingPlayhead, setIsDraggingPlayhead] = useState(false);
-  const wasPlayingRef = useRef(false);
-  
   const handleTimelineSeek = (time: number) => {
     // 直接更新VideoPlayer的video元素（这是唯一的真相源）
     if (videoRef.current) {
