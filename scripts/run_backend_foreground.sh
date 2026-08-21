@@ -13,6 +13,72 @@ INDEX_TTS_DIR="${PROJECT_ROOT}/index-tts"
 # 加载公共环境
 source "${PROJECT_ROOT}/scripts/setup_env.sh"
 
+# 二次兜底强制注入 LLM 环境：
+# 在启动 uvicorn 之前，再次从磁盘 .env 文件把 LLM_* / DASHSCOPE_* 显式 export 一遍，
+# 并把当前值（脱敏）打印到 stdout → 最终会落到 backend.log。
+# 目的：100% 保证"磁盘 .env 写了 → uvicorn 进程环境一定有值"。
+# （之前真实验证过：/proc/<uvicorn pid>/environ 里只有 PROJECT_ROOT 没有 LLM_*，导致翻译期 os.getenv 失败）
+_force_inject_llm_env_and_log() {
+    local env_file="${PROJECT_ROOT}/.env"
+    local line key value
+    local -a WANTED_KEYS=(
+        LLM_BASE_URL LLM_API_KEY LLM_MODEL LLM_TEMPERATURE LLM_TIMEOUT DASHSCOPE_API_KEY
+    )
+    if [ -f "${env_file}" ]; then
+        while IFS= read -r line || [ -n "${line}" ]; do
+            line="${line#"${line%%[![:space:]]*}"}"
+            line="${line%"${line##*[![:space:]]}"}"
+            [ -z "${line}" ] && continue
+            [[ "${line}" == \#* ]] && continue
+            [[ "${line}" != *"="* ]] && continue
+            key="${line%%=*}"
+            value="${line#*=}"
+            key="${key#"${key%%[![:space:]]*}"}"
+            key="${key%"${key##*[![:space:]]}"}"
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
+            if [ "${#value}" -ge 2 ]; then
+                case "${value}" in
+                    \"*\"|\'*\'|\`*\`)
+                        value="${value:1:${#value}-2}"
+                        ;;
+                esac
+            fi
+            case "${key}" in
+                LLM_BASE_URL|LLM_API_KEY|LLM_MODEL|LLM_TEMPERATURE|LLM_TIMEOUT|DASHSCOPE_API_KEY)
+                    ;;
+                *) continue ;;
+            esac
+            if [ -z "${!key:-}" ]; then
+                eval "export ${key}=\"\${value}\""
+            fi
+        done < "${env_file}"
+    fi
+
+    local k masked
+    echo "[supervisord:backend] setup_env_sh 注入结果:"
+    for k in "${WANTED_KEYS[@]}"; do
+        if [ -n "${!k:-}" ]; then
+            case "${k}" in
+                *API_KEY|*API_SECRET)
+                    local raw="${!k}"
+                    if [ "${#raw}" -le 8 ]; then
+                        masked="***"
+                    else
+                        masked="${raw:0:4}…${raw:${#raw}-4}"
+                    fi
+                    ;;
+                *) masked="${!k}" ;;
+            esac
+            echo "[supervisord:backend]   setup_env_sh:${k}=${masked}"
+        else
+            echo "[supervisord:backend]   setup_env_sh:${k}=<empty>"
+        fi
+    done
+}
+_force_inject_llm_env_and_log
+unset -f _force_inject_llm_env_and_log
+
 # 检查虚拟环境
 if [ ! -d "${INDEX_TTS_DIR}/.venv" ]; then
     echo "[supervisord:backend] ERROR: 虚拟环境不存在，请先安装 index-tts 依赖" >&2
