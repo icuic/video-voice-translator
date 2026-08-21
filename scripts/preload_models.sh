@@ -15,7 +15,7 @@ INDEX_TTS_DIR="${PROJECT_ROOT}/index-tts"
 
 # 激活 IndexTTS2 虚拟环境
 if [ ! -d "${INDEX_TTS_DIR}/.venv" ]; then
-    echo "❌ 虚拟环境不存在，请先运行 ./install_all.sh"
+    echo "❌ 虚拟环境不存在，请先运行 ./install.sh"
     exit 1
 fi
 

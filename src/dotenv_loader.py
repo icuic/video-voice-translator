@@ -38,7 +38,7 @@ def load_project_env(override: bool = False) -> Path:
             from dotenv import load_dotenv  # type: ignore
             load_dotenv(dotenv_path=env_file, override=override)
         except Exception:
-            # python-dotenv 未安装时，退化实现 (兼容 install_all.sh 早期阶段 / 旧环境)
+            # python-dotenv 未安装时，退化实现 (兼容 install.sh 早期阶段 / 旧环境)
             with env_file.open("r", encoding="utf-8") as fh:
                 for raw in fh:
                     line = raw.strip()

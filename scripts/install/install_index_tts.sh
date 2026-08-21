@@ -1,6 +1,6 @@
 #!/bin/bash
 # 安装 IndexTTS2（含 5.5GB 模型下载）
-# 环境变量全部继承自父 install_all.sh / .env：
+# 环境变量全部继承自父 install.sh / .env：
 #   EFFECTIVE_MIRROR / UV_DEFAULT_INDEX / HF_ENDPOINT / UV_HTTP_TIMEOUT / GIT_HTTP_*
 # 全程无交互。
 

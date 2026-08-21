@@ -6,9 +6,9 @@
 #   # 然后编辑 .env，至少填写 DASHSCOPE_API_KEY，MIRROR_MODE 推荐填 tencent-intranet（腾讯云 ECS）
 #
 # 用法:
-#   ./install_all.sh                        # 读取 .env 里的 MIRROR_MODE（没有则默认 auto）
-#   ./install_all.sh --mirror tencent       # CLI 覆盖 .env 的镜像模式
-#   ./install_all.sh -h                     # 帮助
+#   ./install.sh                            # 读取 .env 里的 MIRROR_MODE（没有则默认 auto）
+#   ./install.sh --mirror tencent           # CLI 覆盖 .env 的镜像模式
+#   ./install.sh -h                         # 帮助
 
 set -e
 set -o pipefail
@@ -28,7 +28,7 @@ source "${PROJECT_ROOT}/scripts/load_dotenv.sh"
 # ============================================================
 show_help() {
     cat <<'EOF'
-用法: ./install_all.sh [选项]
+用法: ./install.sh [选项]
 
 [ 前置 ] 先填写项目根目录的 .env（cp .env.example .env）
   必填: DASHSCOPE_API_KEY
@@ -45,9 +45,9 @@ show_help() {
         显示本帮助
 
 示例:
-  ./install_all.sh
-  ./install_all.sh --mirror tencent-intranet
-  ./install_all.sh --mirror official
+  ./install.sh
+  ./install.sh --mirror tencent-intranet
+  ./install.sh --mirror official
 EOF
 }
 
@@ -431,7 +431,7 @@ python -c "from indextts.infer_v2 import IndexTTS2; print('✅ IndexTTS2 导入 
 if [ -f "${PROJECT_ROOT}/index-tts/checkpoints/gpt.pth" ] && [ -f "${PROJECT_ROOT}/index-tts/checkpoints/s2mel.pth" ]; then
     echo "✅ 模型文件已就绪"
 else
-    echo "⚠️  模型文件缺失；重跑 install_all.sh 或手动用 modelscope/hf download 下载"
+    echo "⚠️  模型文件缺失；重跑 install.sh 或手动用 modelscope/hf download 下载"
 fi
 [[ -n "${DASHSCOPE_API_KEY}" ]] && echo "✅ DASHSCOPE_API_KEY 已设置（来自 .env）" || echo "⚠️  DASHSCOPE_API_KEY 未设置（填 .env 后 ./manage-supervisor restart 生效）"
 

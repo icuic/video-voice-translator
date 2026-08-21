@@ -19,7 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "${PROJECT_ROOT}"
 
-# 1. HTTP 超时 (父脚本 install_all.sh 已经 export 过, 这里给个默认值)
+# 1. HTTP 超时 (父脚本 install.sh 已经 export 过, 这里给个默认值)
 export UV_HTTP_TIMEOUT="${UV_HTTP_TIMEOUT:-120}"
 
 # 2. PyPI 默认镜像: 环境变量优先, 否则用官方

@@ -126,7 +126,7 @@ video_voice_translator/
 │   └── logs/                     # 日志文件目录
 ├── docs/                         # 文档目录
 ├── media_translation_cli.py      # 命令行入口
-├── install_all.sh                # 一键安装脚本（推荐）
+├── install.sh                    # 一键安装脚本（推荐）
 ├── run_cli.sh                    # CLI 翻译启动脚本
 ├── manage-supervisor.sh          # 服务管理脚本（基于 supervisord）
 ├── supervisor/                   # supervisord 服务配置目录
@@ -169,9 +169,9 @@ video_voice_translator/
 cp .env.example .env
 # 编辑 .env，填写 DASHSCOPE_API_KEY，选择合适的 MIRROR_MODE
 
-./install_all.sh                   # 默认使用 .env 中的 MIRROR_MODE
-./install_all.sh --mirror tencent  # 或用 CLI 覆盖镜像源
-./install_all.sh -h                # 查看全部可用镜像组
+./install.sh                       # 默认使用 .env 中的 MIRROR_MODE
+./install.sh --mirror tencent      # 或用 CLI 覆盖镜像源
+./install.sh -h                    # 查看全部可用镜像组
 ```
 
 详细安装步骤请参考：[安装指南](docs/INSTALL.md)

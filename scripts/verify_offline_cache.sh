@@ -1,5 +1,5 @@
 #!/bin/bash
-# 模型/配置 离线可用性校验脚本（设计给 install_all.sh 步骤7之后调用，或用户手动重跑校验）
+# 模型/配置 离线可用性校验脚本（设计给 install.sh 步骤7之后调用，或用户手动重跑校验）
 # 目标：用 HF_HUB_OFFLINE=1 强制不走任何网络，只靠本地 cache，验证：
 #   1. step4（语音识别）WhisperProcessor 能初始化到 faster-whisper backend（证明 Systran/faster-whisper-medium 真的在本地）
 #   2. step7（音色克隆）VoiceCloner 能走到 IndexTTS2 构造前，checkpoints/config.yaml 真的存在且可 parse
@@ -25,7 +25,7 @@ echo "=========================================="
 echo "   PROJECT_ROOT = ${PROJECT_ROOT}"
 
 if [ ! -f "${INDEX_TTS_DIR}/.venv/bin/python" ]; then
-    echo "❌ index-tts/.venv 不存在（先执行 ./install_all.sh）"
+    echo "❌ index-tts/.venv 不存在（先执行 ./install.sh）"
     exit 2
 fi
 
