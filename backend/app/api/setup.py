@@ -210,41 +210,80 @@ def _render_env(req: SetupApplyRequest) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _schedule_restart_backend_later(delay_seconds: float = 1.5) -> None:
+    """把后端重启"延迟+完全脱离当前 uvicorn 进程"地触发，防止自杀式重启竞态。
+
+    根因（已由真实 HAI 日志证实）：
+      旧代码在 POST /setup/apply 的同步处理中直接调用 `manage-supervisor.sh restart-backend`，
+      而这个 HTTP 请求本身就跑在 vvt-backend(uvicorn) 进程里面 → supervisorctl stop 一执行，
+      会给当前 uvicorn 发 SIGTERM → 承载 subprocess.run 的 Python 进程 + 它 fork 出来的 bash /
+      supervisorctl 一起被杀 → supervisorctl 的 restart 流程只执行到"stop"阶段，"start"阶段没
+      跑完就挂了 → 日志里出现 stopped: vvt-backend 之后再也没有 spawned: vvt-backend → 服务永久 STOPPED。
+
+    修复方式（两层保活，确保不会被一起带死）：
+      1. 先返回 HTTP 200 给前端；
+      2. 由守护线程 sleep 1.5s，保证响应 flush 完成、当前请求生命周期结束；
+      3. 真正触发重启时：使用 nohup + shell `&` + subprocess.Popen(start_new_session=True, close_fds=True)，
+         让重启脚本成为 init(1) 收养的孤儿进程，和当前 uvicorn 父子关系完全切断；
+      4. 日志落到 data/logs/supervisor/restart-trigger.log，方便查"为什么没触发/触发在什么时候"。
+    """
+    import threading
+
+    trigger_log = f"{PROJECT_ROOT}/data/logs/supervisor/restart-trigger.log"
+
+    def _runner() -> None:
+        import time
+
+        try:
+            time.sleep(max(0.0, float(delay_seconds)))
+        except Exception:
+            pass
+
+        cmd = (
+            f"cd {shlex.quote(str(PROJECT_ROOT))} && "
+            f"nohup bash -lc {shlex.quote(f'{str(MANAGE_SCRIPT)} restart-backend')} "
+            f">> {shlex.quote(trigger_log)} 2>&1 </dev/null &"
+        )
+        try:
+            # 关键：start_new_session=True + 不继承 std 管道 → 父进程被杀时，这个 shell/子进程完全不受影响
+            subprocess.Popen(
+                cmd,
+                shell=True,
+                cwd=str(PROJECT_ROOT),
+                start_new_session=True,
+                close_fds=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception as e:  # pragma: no cover
+            try:
+                Path(PROJECT_ROOT / "data" / "logs" / "supervisor").mkdir(parents=True, exist_ok=True)
+                with open(trigger_log, "a", encoding="utf-8") as fh:
+                    fh.write(f"[{__import__('datetime').datetime.now().isoformat(timespec='seconds')}] "
+                             f"[setup-api] schedule restart Popen 失败: {type(e).__name__}: {e}\n")
+            except Exception:
+                pass
+
+
 def _restart_supervisor() -> Dict[str, Any]:
     if not MANAGE_SCRIPT.is_file() or not os.access(MANAGE_SCRIPT, os.X_OK):
         return {"restarted": False, "message": "manage-supervisor.sh 不存在或不可执行，跳过重启", "code": None}
-    # 关键：必须通过 bash -lc 以"交互式 shell 脚本加载方式"执行 manage-supervisor.sh，
-    # 因为 manage-supervisor.sh 头部会 export PROJECT_ROOT / ENV_PROJECT_ROOT / ENV_USER，
-    # 后者正是 ini 配置中 %(ENV_PROJECT_ROOT)s / %(ENV_USER)s 依赖的环境变量。
-    # 若直接 subprocess.run([MANAGE_SCRIPT, "restart"])，FastAPI 子进程中默认没有这些 ENV_ 变量，
-    # 导致 supervisord reload 时读入空 command 路径 → 进程找不到脚本 → 反复退出 → STOPPED。
-    script = (
-        f"cd {shlex.quote(str(PROJECT_ROOT))} && "
-        f"bash -lc {shlex.quote(f'{str(MANAGE_SCRIPT)} restart all')}"
-    )
+    # 关键：这里的"重启"不是立即在当前请求里同步执行，而是"排程 1.5 秒后异步执行"，
+    # 执行主体通过 Popen(nohup + start_new_session) 完全脱离当前 uvicorn 进程，
+    # 避免 supervisor stop 把启动脚本也一起杀掉，导致"只停不启"的 STOPPED 竞态。
     try:
-        proc = subprocess.run(
-            script,
-            shell=True,
-            cwd=str(PROJECT_ROOT),
-            capture_output=True,
-            text=True,
-            timeout=600,
-        )
-        combined_lines = (proc.stdout or "") + "\n" + (proc.stderr or "")
-        tail = "\n".join(combined_lines.strip().splitlines()[-12:])
-        log_hint = (
-            "\n[提示] 若服务仍 STOPPED，请查看后端崩溃日志："
-            f" tail -n 80 {PROJECT_ROOT}/data/logs/supervisor/backend.err.log {PROJECT_ROOT}/data/logs/supervisor/frontend.err.log"
-        )
-        if proc.returncode == 0:
-            return {"restarted": True, "message": (tail or "服务已重启") + log_hint, "code": 0}
-        message = (tail or f"返回码 {proc.returncode}") + log_hint
-        return {"restarted": False, "message": message, "code": proc.returncode}
-    except subprocess.TimeoutExpired as e:
-        return {"restarted": False, "message": f"重启超时（>600s）：{e}", "code": -1}
-    except Exception as e:  # pragma: no cover
-        return {"restarted": False, "message": f"重启失败：{e}", "code": -2}
+        Path(PROJECT_ROOT / "data" / "logs" / "supervisor").mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    _schedule_restart_backend_later(delay_seconds=1.5)
+    log_hint = (
+        "\n[提示] 已排程后端重启，约 1.5~10 秒后生效；"
+        "若超过 30 秒仍 STOPPED，请查看后端崩溃日志："
+        f" tail -n 80 {PROJECT_ROOT}/data/logs/supervisor/backend.err.log"
+        f" {PROJECT_ROOT}/data/logs/supervisor/restart-trigger.log"
+    )
+    return {"restarted": True, "message": ("后端服务已排程异步重启（不会阻塞当前请求）" + log_hint), "code": 0}
 
 
 def _diagnose_write_error(env_path: Path, project_root: Path) -> str:

@@ -85,20 +85,37 @@ export function SetupPage({ onConfigured, allowSkip = false }: SetupPageProps) {
         restart,
       });
       setResult(r);
-      // 关键修复：只要后端返回 saved=true，就代表 .env 已经写入成功
-      // 服务重启失败（restarted=false）只作为 warning 信息展示在成功区，不阻止切回主页
       if (r.saved) {
-        const delay = restart ? 2500 : 300;
-        window.setTimeout(() => {
-          try {
-            onConfigured?.();
-          } catch (e) {
-            // 任何 onConfigured 抛错（路由守卫replaceState连锁、store初始化失败等）
-            // 都强制整页跳转，保证不白屏
-            console.error('[SetupPage] onConfigured throw, 强制 reload 跳 /', e);
-            window.location.href = '/';
+        const waitForBackend = async () => {
+          const hardDeadline = Date.now() + (restart ? 90_000 : 5_000);
+          const initialDelay = restart ? 3500 : 200;
+          let backoff = 1200;
+          await new Promise((res) => setTimeout(res, initialDelay));
+          while (Date.now() < hardDeadline) {
+            try {
+              const s: SetupStatus = await setupService.getStatus();
+              if (s.configured) {
+                try {
+                  onConfigured?.();
+                  return;
+                } catch (e) {
+                  console.error('[SetupPage] onConfigured throw, 强制 reload 跳 /', e);
+                  try { window.location.href = '/'; } catch (_) { /* noop */ }
+                  return;
+                }
+              }
+            } catch (_) {
+              // 后端重启窗口期：502 / ECONNREFUSED / socket hang up 全部吞掉，继续轮询
+            }
+            const waitMs = Math.min(backoff, 4000);
+            backoff = Math.round(backoff * 1.25);
+            await new Promise((res) => setTimeout(res, waitMs));
           }
-        }, delay);
+          // 兜底：90s 后即便后端没成功回来（比如进程真的起不来），也不要卡死在 SetupPage，
+          // 强制整页跳 / ，让 ErrorBoundary / 全局 reload 兜底再给一次机会。
+          try { window.location.href = '/'; } catch (_) { /* noop */ }
+        };
+        void waitForBackend();
       } else {
         setError('后端返回保存失败，请查看错误详情');
       }
