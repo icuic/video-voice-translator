@@ -1,13 +1,15 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { FileUpload } from './components/Upload/FileUpload';
 import { VideoPlayer } from './components/VideoPlayer/VideoPlayer';
 import { SegmentList } from './components/SegmentList/SegmentList';
 import { Timeline } from './components/Timeline/Timeline';
 import { TranslationProgress } from './components/Progress/TranslationProgress';
+import { SetupPage } from './components/Setup/SetupPage';
 import { useSegmentStore } from './stores/useSegmentStore';
 import { segmentService } from './services/segments';
 import { translationService } from './services/translation';
 import { mediaService } from './services/media';
+import { setupService, SetupStatus } from './services/setup';
 import { Segment } from './types/segment';
 import { TranslationTask } from './types/media';
 
@@ -25,8 +27,69 @@ function App() {
   const [showEditor, setShowEditor] = useState(false);
   const [showProgress, setShowProgress] = useState(false);
   const [translationTask, setTranslationTask] = useState<TranslationTask | null>(null);
-  const [resynthesizedSegments, setResynthesizedSegments] = useState<Set<number>>(new Set()); // 已重新合成的分段ID集合
-  const [isRegenerating, setIsRegenerating] = useState(false); // 是否正在重新生成
+  const [resynthesizedSegments, setResynthesizedSegments] = useState<Set<number>>(new Set());
+  const [isRegenerating, setIsRegenerating] = useState(false);
+
+  // --- 初始化 & 配置状态守卫 ------------------------------------------------
+  const [bootstrapping, setBootstrapping] = useState(true);
+  const [forceSetup, setForceSetup] = useState(false);
+  const [llmConfigured, setLlmConfigured] = useState(false);
+
+  const refreshSetupStatus = useCallback(async () => {
+    try {
+      const s: SetupStatus = await setupService.getStatus();
+      setLlmConfigured(s.configured);
+    } catch (e) {
+      // 接口短暂不可用，不做硬阻塞
+      console.warn('setup/status 接口不可用，默认按未配置处理', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    const onHashOrPath = () => {
+      const p = window.location.pathname || '/';
+      if (p.replace(/\/+$/, '') === '/setup') {
+        setForceSetup(true);
+      } else {
+        setForceSetup(false);
+      }
+    };
+    onHashOrPath();
+    window.addEventListener('popstate', onHashOrPath);
+    (async () => {
+      await refreshSetupStatus();
+      setBootstrapping(false);
+    })();
+    return () => window.removeEventListener('popstate', onHashOrPath);
+  }, [refreshSetupStatus]);
+
+  const handleSetupDone = useCallback(() => {
+    setForceSetup(false);
+    void refreshSetupStatus().finally(() => {
+      if (window.location.pathname.replace(/\/+$/, '') === '/setup') {
+        window.history.replaceState({}, '', '/');
+      }
+    });
+  }, [refreshSetupStatus]);
+
+  // /setup 路径 或 未配置 或 强制进入 -> 显示 SetupPage
+  const shouldShowSetup = !bootstrapping && (forceSetup || !llmConfigured);
+  if (bootstrapping) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-900 to-slate-900 flex items-center justify-center p-4">
+        <div className="text-white text-lg flex items-center gap-3">
+          <svg className="animate-spin w-6 h-6" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25" />
+            <path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
+          </svg>
+          正在初始化...
+        </div>
+      </div>
+    );
+  }
+  if (shouldShowSetup) {
+    return <SetupPage onConfigured={handleSetupDone} allowSkip={forceSetup} />;
+  }
   
   // 计算待重新生成的分段数量
   const pendingRegenerateCount = resynthesizedSegments.size;
@@ -633,6 +696,16 @@ function App() {
                   </div>
                   <h1 className="text-3xl font-bold text-white">Video Voice Translator</h1>
                 </div>
+                <button
+                  onClick={() => {
+                    window.history.pushState({}, '', '/setup');
+                    setForceSetup(true);
+                  }}
+                  className="px-3 py-2 rounded-lg bg-slate-700/70 hover:bg-slate-700 text-slate-200 text-sm border border-slate-600 transition"
+                  title="重新配置 LLM 翻译服务（或访问 /setup）"
+                >
+                  ⚙️ 配置 LLM
+                </button>
               </div>
               
               {/* 进度显示 */}
@@ -656,6 +729,16 @@ function App() {
             <h1 className="text-3xl font-bold">Video Voice Translator</h1>
           </div>
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => {
+                window.history.pushState({}, '', '/setup');
+                setForceSetup(true);
+              }}
+              className="px-3 py-2 rounded-lg bg-slate-700/70 hover:bg-slate-700 text-slate-200 text-sm border border-slate-600 transition"
+              title="重新配置 LLM 翻译服务（或访问 /setup）"
+            >
+              ⚙️ 配置 LLM
+            </button>
             {/* 重新生成最终视频按钮 */}
             {pendingRegenerateCount > 0 && (
               <button

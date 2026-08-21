@@ -1,5 +1,28 @@
 # AI音视频翻译系统
 
+> 🚀 **强烈推荐：腾讯云 HAI 一键部署，SSH 粘贴一行命令即装即用！**
+>
+> 专为音视频翻译优化的 V100 32GB 显存套餐，GPU 驱动 + CUDA 已齐备，登录后粘贴一行命令 10~20 分钟装好全部模型与依赖。
+>
+> | 配置 | 规格 | 新人专享价 |
+> |------|------|----------|
+> | GPU | NVIDIA V100 32GB | |
+> | CPU | 10 核 | |
+> | 内存 | 38GB | |
+> | 系统盘 | 128GB | **¥49 / 7天**（0.8折，限1件） |
+>
+> 👉 **[点击前往腾讯云购买（作者推广链接，同价支持项目维护）](https://curl.qcloud.com/9j4S4Hug)**
+>
+> 购买时在「应用名称」下拉框中选择官方 **「PyTorch 2.x / 3.x」** 基础镜像即可。启动后 SSH 登录，粘贴下方一行命令自动安装：
+>
+> ```bash
+> bash -c "$(curl -fsSL https://raw.githubusercontent.com/video-voice-translator/video-voice-translator/main/hai-deploy.sh)"
+> ```
+>
+> 完整部署教程参见：[腾讯云 HAI 部署指南](docs/HAI_DEPLOY.md)
+
+---
+
 ## 项目简介
 
 Video Voice Translator 是一个基于人工智能技术的多语言音视频翻译系统，能够将视频或音频内容从一种语言翻译成另一种语言，并通过音色克隆技术保持原说话者的声音特征。

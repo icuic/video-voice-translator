@@ -23,7 +23,7 @@ project_root = os.path.dirname(backend_dir)
 sys.path.insert(0, project_root)
 sys.path.insert(0, backend_dir)
 
-from app.api import media, translation, segments, websocket
+from app.api import media, translation, segments, websocket, setup
 
 # 中间件：增加请求体大小限制以支持大文件上传
 class LargeFileUploadMiddleware(BaseHTTPMiddleware):
@@ -59,6 +59,7 @@ app.include_router(media.router, prefix="/api", tags=["media"])
 app.include_router(translation.router, prefix="/api", tags=["translation"])
 app.include_router(segments.router, prefix="/api", tags=["segments"])
 app.include_router(websocket.router, prefix="/ws", tags=["websocket"])
+app.include_router(setup.router, prefix="/api", tags=["setup"])
 
 
 @app.get("/")

@@ -3,7 +3,8 @@
 #
 # 前置步骤（必做）:
 #   cp .env.example .env
-#   # 然后编辑 .env，至少填写 DASHSCOPE_API_KEY，MIRROR_MODE 推荐填 tencent-intranet（腾讯云 ECS）
+#   # 然后至少填写 LLM_BASE_URL / LLM_API_KEY / LLM_MODEL 三件套
+#   # （HAI 用户不需要此步：请直接运行 hai-deploy.sh，它会自动预置 .env 并调本脚本）
 #
 # 用法:
 #   ./install.sh                            # 读取 .env 里的 MIRROR_MODE（没有则默认 auto）
@@ -30,9 +31,10 @@ show_help() {
     cat <<'EOF'
 用法: ./install.sh [选项]
 
-[ 前置 ] 先填写项目根目录的 .env（cp .env.example .env）
-  必填: DASHSCOPE_API_KEY
-  推荐: MIRROR_MODE  (腾讯云 ECS 填 tencent-intranet)
+[ 前置 ] 先准备项目根目录的 .env（cp .env.example .env）
+  必填（翻译功能运行时）: LLM_BASE_URL + LLM_API_KEY + LLM_MODEL
+                         （安装阶段不强制，安装完再用 Web 或 configure.sh 补填也行）
+  推荐: MIRROR_MODE  (腾讯云 ECS/HAI 填 tencent-intranet)
 
 选项:
   --mirror <tencent-intranet|tencent|china|official|auto>
@@ -154,7 +156,13 @@ echo "=========================================="
 echo "🚀 Video Voice Translator - 一键安装（无交互）"
 echo "=========================================="
 echo "  .env 文件: ${PROJECT_ROOT}/.env $([[ -f "${PROJECT_ROOT}/.env" ]] && echo ✅ 已加载 || echo ⚠️  未提供（先 cp .env.example .env）)"
-[[ -z "${DASHSCOPE_API_KEY}" ]] && echo "  ⚠️  DASHSCOPE_API_KEY 未设置（翻译功能运行时需要；.env 里填好再 manage-supervisor restart 即可）"
+if [[ -z "${LLM_API_KEY:-}" || -z "${LLM_BASE_URL:-}" || -z "${LLM_MODEL:-}" ]]; then
+    if [[ -z "${DASHSCOPE_API_KEY:-}" ]]; then
+        echo "  ⚠️  LLM 三件套 (LLM_BASE_URL+LLM_API_KEY+LLM_MODEL) 未填写；翻译功能运行时必需。安装后可用 ./configure.sh 或 Web /setup 页补填并重启服务"
+    else
+        echo "  ℹ️  检测到 DASHSCOPE_API_KEY（兼容旧配置），新三件套未填写；建议迁移到 LLM 三件套以支持任意兼容 OpenAI 协议的供应商"
+    fi
+fi
 echo "  镜像模式: ${MIRROR_MODE}"
 echo ""
 
@@ -226,7 +234,7 @@ echo "   NPM_REGISTRY     = ${NPM_REGISTRY}"
 echo "   HF_ENDPOINT      = ${HF_ENDPOINT:-（直连官方 https://huggingface.co）}"
 echo "   NODE_SETUP_URL   = ${NODE_SETUP_URL}"
 echo ""
-[[ -z "${DASHSCOPE_API_KEY}" ]] && echo "⚠️  运行时必填 DASHSCOPE_API_KEY 未设置（.env 填好后 ./manage-supervisor restart 即可生效）"
+[[ -z "${LLM_API_KEY:-}" && -z "${DASHSCOPE_API_KEY:-}" ]] && echo "⚠️  运行时 LLM 配置未设置（LLM_BASE_URL+LLM_API_KEY+LLM_MODEL 三件套或旧版 DASHSCOPE_API_KEY 至少填一组）；填好 .env 后 ./manage-supervisor restart 即可生效"
 
 # 导出
 export EFFECTIVE_MIRROR="${MIRROR_MODE}"
@@ -433,7 +441,13 @@ if [ -f "${PROJECT_ROOT}/index-tts/checkpoints/gpt.pth" ] && [ -f "${PROJECT_ROO
 else
     echo "⚠️  模型文件缺失；重跑 install.sh 或手动用 modelscope/hf download 下载"
 fi
-[[ -n "${DASHSCOPE_API_KEY}" ]] && echo "✅ DASHSCOPE_API_KEY 已设置（来自 .env）" || echo "⚠️  DASHSCOPE_API_KEY 未设置（填 .env 后 ./manage-supervisor restart 生效）"
+if [[ -n "${LLM_API_KEY:-}" && -n "${LLM_BASE_URL:-}" && -n "${LLM_MODEL:-}" ]]; then
+    echo "✅ LLM 三件套已设置（LLM_BASE_URL+LLM_API_KEY+LLM_MODEL）"
+elif [[ -n "${DASHSCOPE_API_KEY:-}" ]]; then
+    echo "✅ DASHSCOPE_API_KEY 已设置（向后兼容，建议迁移到 LLM 三件套）"
+else
+    echo "⚠️  LLM 配置未设置（填 .env 后 ./manage-supervisor restart 生效，或运行 ./configure.sh 或 Web /setup 页填写）"
+fi
 
 # ============================================================
 # 步骤7: 预下载运行时模型（把 faster-whisper-medium、Demucs、pyannote、speechbrain、resemblyzer 等拉到本地 cache）
