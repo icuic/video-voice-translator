@@ -105,3 +105,7 @@ frontend/.vite/
 # React/Vite构建产物
 *.tsbuildinfo
 .vite
+
+# IndexTTS2 整个目录忽略（历史上曾误登记为 submodule 指针；
+# 项目实际通过 install.sh 在运行时自动创建该目录）
+index-tts
