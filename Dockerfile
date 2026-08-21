@@ -25,18 +25,21 @@ RUN npm run build 2>&1 | tail -10
 # ---- Stage 2: 最终运行镜像 ----
 FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04 AS runtime
 
-# ---- 基础系统依赖（最小化安装以控制镜像体积） ----
+# ---- 基础系统依赖（最小化安装以控制镜像体积，不装 sudo 减少攻击面） ----
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update -y -q \
  && apt-get install -y -q --no-install-recommends \
         ca-certificates curl wget unzip ffmpeg rsync supervisor \
         python3 python3-venv python3-pip \
-        sudo git tzdata locales bash-completion \
+        git tzdata locales bash-completion gosu \
         libsndfile1 libgomp1 libsox-dev sox \
  && rm -rf /var/lib/apt/lists/* \
  && locale-gen en_US.UTF-8 zh_CN.UTF-8 2>/dev/null || true \
  && ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
- && echo "Asia/Shanghai" > /etc/timezone
+ && echo "Asia/Shanghai" > /etc/timezone \
+ && groupadd -r -g 999 vvt \
+ && useradd -r -u 999 -g vvt -s /bin/bash -d /app vvt \
+ && gosu nobody true
 
 ENV LANG=zh_CN.UTF-8 \
     LC_ALL=zh_CN.UTF-8 \
@@ -66,15 +69,18 @@ COPY --from=frontend-build --chown=root:root /app-src/frontend/dist /app/fronten
 # ---- 4) 前端 node_modules（vite 依赖） ----
 COPY frontend/node_modules /app/frontend/node_modules
 
-# ---- 5) 保证脚本可执行 ----
+# ---- 5) 保证脚本可执行 + 所有 APP_ROOT 目录权限交给 vvt 用户可读可执行（不影响运行时 Web 写 .env/data） ----
 RUN chmod +x /app/hai-deploy.sh /app/configure.sh /app/update_project.sh \
     /app/install.sh /app/manage-supervisor.sh 2>/dev/null; \
-    find /app/scripts -type f -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
+    find /app/scripts -type f -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true; \
+    chown -R vvt:vvt /app
 
 # ---- 6) 预置空 .env（如果未提供；运行时会用挂载卷覆盖） ----
+USER vvt
 RUN if [ ! -f /app/.env ] && [ -f /app/.env.example ]; then \
         cp /app/.env.example /app/.env; \
     fi
+USER root
 
 # ---- 7) 给 supervisor 在镜像里有个默认 PID 目录 ----
 RUN mkdir -p /app/data/logs/supervisor /app/data/run /app/data/uploads /app/data/outputs /app/data/temp /app/data/stats
