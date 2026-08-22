@@ -417,6 +417,27 @@ def apply_setup(req: SetupApplyRequest) -> Dict[str, Any]:
     new_core = _env_llm_core(new_env)
     core_changed = old_core != new_core
 
+    # 链路 3：写入成功后立刻把三个 LLM_*（加温度/超时/DASHSCOPE）写进当前 uvicorn 进程的 os.environ。
+    # 这样"同一进程下，在下次重启排程真正生效之前"发起的翻译任务，
+    # 也能立刻 os.getenv('LLM_*') 拿到新值，不会再报『刚保存就翻译，仍提示未配置』。
+    # 重启生效后，新 uvicorn 会再由 main.py 的 import-time / lifespan 注入兜底一次。
+    for (env_key, core_value) in new_core.items():
+        if env_key in ("LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL", "LLM_TEMPERATURE", "LLM_TIMEOUT", "DASHSCOPE_API_KEY"):
+            if core_value:
+                os.environ[env_key] = core_value
+    _inline_printed = ", ".join(
+        f"{k}={'***' if 'KEY' in k or 'SECRET' in k else new_core.get(k, '')}"
+        for k in ("LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL")
+        if new_core.get(k)
+    )
+    try:
+        print(
+            f"[setup-api] apply_setup 已把 LLM_* 即时写回当前 uvicorn os.environ: {_inline_printed}",
+            flush=True,
+        )
+    except Exception:
+        pass
+
     user_explicit_restart = bool(req.restart)
     should_schedule_restart = core_changed or user_explicit_restart
 

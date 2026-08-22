@@ -91,6 +91,35 @@ def _dotenv_reload_from_project_root_if_missing() -> None:
         except Exception:
             return
 
+    # 调试信息：把注入结果同时打到 stdout（进入 supervisord backend.log）+ logger，肉眼一眼能确认兜底生效。
+    try:
+        want_report = ("LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL", "LLM_TEMPERATURE", "LLM_TIMEOUT", "DASHSCOPE_API_KEY")
+        injected_parts = []
+        for k in want_report:
+            v = (os.getenv(k) or "").strip()
+            if not v:
+                continue
+            if "KEY" in k or "SECRET" in k:
+                masked = "***" if len(v) <= 8 else f"{v[:4]}…{v[-4:]}"
+                injected_parts.append(f"{k}={masked}")
+            else:
+                injected_parts.append(f"{k}={v}")
+        if injected_parts:
+            msg = (
+                "[text_translator:dotenv-reload] Python 侧已从 PROJECT_ROOT/.env 把 LLM_* 注入当前 os.environ: "
+                + ",".join(injected_parts)
+            )
+            try:
+                print(msg, flush=True)
+            except Exception:
+                pass
+            try:
+                logging.getLogger(__name__).info(msg)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
 
 _dotenv_reload_from_project_root_if_missing()
 
@@ -101,17 +130,27 @@ class TextTranslator:
     def __init__(self, config: Dict[str, Any]):
         """
         初始化文本翻译器
-        
+
         Args:
             config: 配置字典
         """
         self.config = config
         self.logger = logging.getLogger(__name__)
-        
+
         # 翻译配置
         self.translation_config = config.get("translation", {})
         self.source_language = self.translation_config.get("source_language", "zh")
         self.target_language = self.translation_config.get("target_language", "zh")  # 修复：默认值改为zh
+
+        # **翻译前强兜底（最关键）**：
+        # 只要翻译任务真正执行（也就是用户点了翻译按钮 / 后台翻译 pipeline 跑起来），
+        # 立刻再从 PROJECT_ROOT/.env 强制把 LLM_* 注入到当前 Python os.environ，
+        # 即便 main.py 的 import-time / lifespan 注入 + setup 保存时 os.environ 写入都因某种原因没生效，
+        # 到了这一步也一定能拿到值——因为这一步离 os.getenv() 读取仅 1-2 行代码距离。
+        try:
+            _dotenv_reload_from_project_root_if_missing()
+        except Exception:
+            pass
 
         # 运行时 LLM 配置：优先级 .env LLM_* > .env DASHSCOPE_API_KEY(DashScope兼容模式) > config.yaml > 代码内置安全默认
         # 这样既支持任何 OpenAI 兼容服务（LMDeploy / vLLM / Ollama / SiliconFlow / Groq 等），

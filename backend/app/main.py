@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
+from contextlib import asynccontextmanager
 import os
 import sys
 import logging
@@ -30,12 +31,13 @@ sys.path.insert(0, backend_dir)
 # 导致 src/text_translator.py 用 os.getenv('LLM_*') 时全部取不到，直接抛『未配置 LLM 翻译密钥』。
 # 这里在 import 业务路由前先写一遍 os.environ，能 100% 覆盖到 FastAPI 主进程、uvicorn worker 进程以及
 # 它们 import 的 src/* 模块，彻底消除"磁盘 .env 有值但进程环境没值"的断层。
-def _force_llm_env_from_project_dotenv(project_root: str) -> None:
+#
+# 另外：因为 fastapi/uvicorn 对 stdout 的 forward 行为在生产 supervisord 管道下是可靠落到 backend.log 的，
+# 所以同时向 logging 和 stdout 打印一份，肉眼在 backend.log 里就能直接看到 dotenv 注入了啥。
+def _force_llm_env_from_project_dotenv(project_root: str, tag: str = "import-time") -> int:
     from pathlib import Path
 
     env_file = Path(project_root) / ".env"
-    if not env_file.is_file():
-        return
     want_keys = (
         "LLM_BASE_URL",
         "LLM_API_KEY",
@@ -47,6 +49,11 @@ def _force_llm_env_from_project_dotenv(project_root: str) -> None:
         "HF_ENDPOINT",
         "USE_MODELSCOPE",
     )
+    if not env_file.is_file():
+        msg = f"[main.py:{tag}] dotenv 注入: .env 文件不存在，跳过 ({env_file})"
+        logging.getLogger(__name__).warning(msg)
+        print(msg, flush=True)
+        return 0
     parsed: dict[str, str] = {}
     try:
         for raw in env_file.read_text(encoding="utf-8").splitlines():
@@ -61,29 +68,57 @@ def _force_llm_env_from_project_dotenv(project_root: str) -> None:
             if k in want_keys:
                 parsed[k] = v
     except Exception as e:  # pragma: no cover
-        logging.getLogger(__name__).warning("读取 PROJECT_ROOT/.env 失败，跳过 LLM env 注入: %s", e)
-        return
+        msg = f"[main.py:{tag}] dotenv 注入: 读取 .env 失败，跳过 LLM env 注入: {e}"
+        logging.getLogger(__name__).warning(msg)
+        print(msg, flush=True)
+        return 0
+
     applied_count = 0
     for k in want_keys:
         if k not in parsed:
             continue
-        if not (os.getenv(k) or "").strip():
-            # 这里只能改 os.environ（进程自己的内存表），不能改父 shell；
-            # 但对 Python 子进程和 import 的 src/* 模块来说已经足够。
-            os.environ[k] = parsed[k]
-            applied_count += 1
-    logging.getLogger(__name__).info(
-        "[main.py] dotenv 注入: applied=%s keys_total=%s want=%s injected=%s",
-        applied_count,
-        len(parsed),
-        ",".join(want_keys),
-        ",".join(f"{k}=***" if "KEY" in k or "SECRET" in k else f"{k}={parsed.get(k,'')}" for k in want_keys if k in parsed),
+        # 注意：这里永远覆盖（不管原本进程环境表上有没值），因为磁盘 .env 才是用户保存时
+        # 真正想要的值；supervisor environment 白名单可能传了空串 % 展开过来。
+        os.environ[k] = parsed[k]
+        applied_count += 1
+
+    injected_parts = []
+    for k in want_keys:
+        if k not in parsed:
+            continue
+        if "KEY" in k or "SECRET" in k:
+            injected_parts.append(f"{k}=***")
+        else:
+            injected_parts.append(f"{k}={parsed.get(k, '')}")
+    msg = (
+        f"[main.py:{tag}] dotenv 注入: applied={applied_count} "
+        f"keys_total={len(parsed)} want={','.join(want_keys)} "
+        f"injected={','.join(injected_parts)}"
     )
+    logging.getLogger(__name__).info(msg)
+    # 关键：print 直接打到 stdout，uvicorn stdout 被 supervisord 捕捉后一定进 backend.log，
+    # 不会被任何 logging 配置 / worker stdout 吞掉。
+    print(msg, flush=True)
+    return applied_count
 
 
-_force_llm_env_from_project_dotenv(project_root)
+_APPLIED_IMPORT_TIME = _force_llm_env_from_project_dotenv(project_root, "import-time")
 
 from app.api import media, translation, segments, websocket, setup
+
+
+@asynccontextmanager
+async def lifespan(app_instance: FastAPI):
+    """FastAPI 启动事件：再做一次 dotenv 注入，避免某些 import 顺序下的 worker 进程没拿到值"""
+    _applied = _force_llm_env_from_project_dotenv(project_root, "lifespan-startup")
+    msg = f"[main.py:lifespan-startup] dotenv 注入完成 (applied={_applied})，应用已就绪"
+    logging.getLogger(__name__).info(msg)
+    print(msg, flush=True)
+    yield
+    msg = f"[main.py:lifespan-shutdown] FastAPI app 关闭"
+    logging.getLogger(__name__).info(msg)
+    print(msg, flush=True)
+
 
 # 中间件：增加请求体大小限制以支持大文件上传
 class LargeFileUploadMiddleware(BaseHTTPMiddleware):
@@ -99,7 +134,8 @@ class LargeFileUploadMiddleware(BaseHTTPMiddleware):
 app = FastAPI(
     title="Video Voice Translator API",
     description="音视频翻译系统 REST API",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 # 添加大文件上传中间件

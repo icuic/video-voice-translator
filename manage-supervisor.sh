@@ -29,53 +29,59 @@ export USER="$(id -un)"
 export ENV_PROJECT_ROOT="${PROJECT_ROOT}"
 export ENV_USER="${USER}"
 
-# 关键：把 .env 文件中所有键 export 到当前 shell，supervisor 启动子进程时通过 ini
-# 中的 environment= 字段用 %(ENV_LLM_BASE_URL)s / %(ENV_LLM_API_KEY)s / %(ENV_LLM_MODEL)s
-# 等语法才能把它们注入到 uvicorn 进程里。如果缺少这一步，即使磁盘 .env 写了值，
-# 进程环境表 /proc/<pid>/environ 里也看不到 LLM_BASE_URL 等键（真实机多次验证过）。
-#
-# set -a 让下面的 . safe-source 对所有 VAR=VALUE 自动执行 export，
-# 不会被 while-read 子 shell 坑影响（bash 内置 source 在当前 shell 执行）。
-if [ -f "${PROJECT_ROOT}/.env" ]; then
-    _SAFE_DOTENV="$(mktemp /tmp/vvt-manage-supervisor-dotenv.XXXXXX)"
-    awk '
-        BEGIN { FS="=" }
-        {
-            line=$0
-            sub(/^[ \t]+/, "", line)
-            sub(/[ \t\r]+$/, "", line)
-            if (length(line)==0) next
-            if (substr(line,1,1)=="#") next
-            if (index(line,"=")==0) next
-            key=substr(line,1,index(line,"=")-1)
-            if (key !~ /^[A-Za-z_][A-Za-z0-9_]*$/) next
-            print line
-        }
-    ' < "${PROJECT_ROOT}/.env" > "${_SAFE_DOTENV}"
-    set -a
-    # shellcheck disable=SC1090
-    . "${_SAFE_DOTENV}"
-    set +a
-    rm -f "${_SAFE_DOTENV}"
-fi
 
-# 剥去可能被用户粘贴进去的引号（双引号/单引号/反引号），然后再显式 export 一遍，
-# 确保 supervisor 的 %(ENV_XXX)s 取到的是"干净值"，不会把引号带进去。
-_NORMALIZE_KEYS=(LLM_BASE_URL LLM_API_KEY LLM_MODEL LLM_TEMPERATURE LLM_TIMEOUT DASHSCOPE_API_KEY MIRROR_MODE HF_ENDPOINT USE_MODELSCOPE HF_HOME HF_HUB_DISABLE_TELEMETRY)
-for _k in "${_NORMALIZE_KEYS[@]}"; do
-    _v="${!_k:-}"
-    if [ "${#_v}" -ge 2 ]; then
-        case "${_v}" in
-            \"*\"|\'*\'|\`*\`)
-                _v="${_v:1:${#_v}-2}"
-                ;;
-        esac
+# 将 PROJECT_ROOT/.env 中的全部 LLM/MIRROR/HF 相关键 export 到当前 shell，
+# 同时生成前缀 ENV_* 版本（供 backend.ini 中的 %(ENV_LLM_BASE_URL)s 等语法读取）。
+#
+# 重要：此函数必须在所有子命令（start/restart/restart-backend/stop/status）入口处
+# 无条件调用一次，即便 start_supervisor() 里的 pgrep guard 命中直接 return，也要执行。
+# 因为如果 supervisord 已经在运行，那么 "restart-backend" / "restart" 会走
+# supervisorctl restart 路径，supervisord daemon 会重新展开 environment 字段的
+# %(ENV_XXX)s % 语法——而 % 展开时 supervisord daemon 会从"调用方 supervisorctl
+# 进程"身上继承的环境变量里取（或者说从它自己 fork supervisorctl 时的 env 里取，
+# 但无论哪种模型，只要当前 shell export 了 XXX/ENV_XXX，后续子进程就能看到，
+# supervisor 内部的 %(ENV_XXX)s 也能读到）。
+_export_dotenv_keys_to_shell() {
+    if [ -f "${PROJECT_ROOT}/.env" ]; then
+        _SAFE_DOTENV="$(mktemp /tmp/vvt-manage-supervisor-dotenv.XXXXXX)"
+        awk '
+            BEGIN { FS="=" }
+            {
+                line=$0
+                sub(/^[ \t]+/, "", line)
+                sub(/[ \t\r]+$/, "", line)
+                if (length(line)==0) next
+                if (substr(line,1,1)=="#") next
+                if (index(line,"=")==0) next
+                key=substr(line,1,index(line,"=")-1)
+                if (key !~ /^[A-Za-z_][A-Za-z0-9_]*$/) next
+                print line
+            }
+        ' < "${PROJECT_ROOT}/.env" > "${_SAFE_DOTENV}"
+        set -a
+        # shellcheck disable=SC1090
+        . "${_SAFE_DOTENV}"
+        set +a
+        rm -f "${_SAFE_DOTENV}"
     fi
-    export "${_k}=${_v}"
-    # 同时生成前缀 ENV_* 版本，供 ini 中 %(ENV_XXX)s 显式引用
-    export "ENV_${_k}=${_v}"
-done
-unset _NORMALIZE_KEYS _k _v _SAFE_DOTENV
+
+    _NORMALIZE_KEYS=(LLM_BASE_URL LLM_API_KEY LLM_MODEL LLM_TEMPERATURE LLM_TIMEOUT DASHSCOPE_API_KEY MIRROR_MODE HF_ENDPOINT USE_MODELSCOPE HF_HOME HF_HUB_DISABLE_TELEMETRY)
+    for _k in "${_NORMALIZE_KEYS[@]}"; do
+        _v="${!_k:-}"
+        if [ "${#_v}" -ge 2 ]; then
+            case "${_v}" in
+                \"*\"|\'*\'|\`*\`)
+                    _v="${_v:1:${#_v}-2}"
+                    ;;
+            esac
+        fi
+        export "${_k}=${_v}"
+        export "ENV_${_k}=${_v}"
+    done
+    unset _NORMALIZE_KEYS _k _v _SAFE_DOTENV
+}
+# 脚本第一次加载时就跑一次，确保后面所有函数/子命令分支都能读到。
+_export_dotenv_keys_to_shell
 
 # 创建必要目录
 mkdir -p "${PROJECT_ROOT}/data/run" "${LOG_DIR}"
@@ -215,12 +221,15 @@ reload_config() {
 
 case "${1:-status}" in
     start|up)
+        _export_dotenv_keys_to_shell
         start_supervisord
         ;;
     stop|down|shutdown)
+        _export_dotenv_keys_to_shell
         stop_supervisord
         ;;
     restart)
+        _export_dotenv_keys_to_shell
         if _is_supervisord_running; then
             echo -e "${BLUE}🔄 重启所有服务...${NC}"
             _ctl restart all
@@ -232,51 +241,63 @@ case "${1:-status}" in
         fi
         ;;
     status)
+        _export_dotenv_keys_to_shell
         show_status
         ;;
     reload|reread|update)
+        _export_dotenv_keys_to_shell
         reload_config
         ;;
     restart-backend)
+        _export_dotenv_keys_to_shell
         echo -e "${BLUE}🔄 重启后端...${NC}"
         _ctl restart vvt-backend
         _ctl status vvt-backend
         ;;
     restart-frontend)
+        _export_dotenv_keys_to_shell
         echo -e "${BLUE}🔄 重启前端...${NC}"
         _ctl restart vvt-frontend
         _ctl status vvt-frontend
         ;;
     stop-backend)
+        _export_dotenv_keys_to_shell
         echo -e "${BLUE}🛑 停止后端...${NC}"
         _ctl stop vvt-backend
         _ctl status vvt-backend
         ;;
     stop-frontend)
+        _export_dotenv_keys_to_shell
         echo -e "${BLUE}🛑 停止前端...${NC}"
         _ctl stop vvt-frontend
         _ctl status vvt-frontend
         ;;
     start-backend)
+        _export_dotenv_keys_to_shell
         echo -e "${BLUE}🚀 启动后端...${NC}"
         _ctl start vvt-backend
         _ctl status vvt-backend
         ;;
     start-frontend)
+        _export_dotenv_keys_to_shell
         echo -e "${BLUE}🚀 启动前端...${NC}"
         _ctl start vvt-frontend
         _ctl status vvt-frontend
         ;;
     logs)
+        _export_dotenv_keys_to_shell
         show_logs all
         ;;
     logs-backend)
+        _export_dotenv_keys_to_shell
         show_logs backend
         ;;
     logs-frontend)
+        _export_dotenv_keys_to_shell
         show_logs frontend
         ;;
     ctl)
+        _export_dotenv_keys_to_shell
         shift
         if [ $# -eq 0 ]; then
             echo "用法: $0 ctl <supervisorctl 命令...>"
