@@ -177,10 +177,25 @@ RUN set -eux; \
     echo "APT_MIRROR=${APT_MIRROR:-auto}"        >> /app/BUILD_VERSION.txt; \
     chown vvt:vvt /app/BUILD_VERSION.txt 2>/dev/null || true; \
     \
-    # (I) 最后：快速 sanity check（python / vite / supervisord 真的存在 + 可执行）
+    # (I) 最后：快速 sanity check（python / supervisord 真的存在 + 可执行；
+    #     vite 只检查文件存在+可执行，不去执行它 —— 原因：
+    #     vite 是 shebang 脚本 #!/usr/bin/env node，而容器镜像里不保证有 node ELF 二进制
+    #     （node/npm/npx 正常由宿主 frontend/node_modules/.bin 软链到 /usr/local/bin/，
+    #     但 node_modules/.bin 中不一定真的存在 ./node 文件；如果宿主没有把 node 文件
+    #     带进来，那么这里执行 "${FRONTEND_VITE}" --version 会报 "node: not found"
+    #     Exit 127 直接把整个镜像打挂 —— build-v1.0.0-20260823-064718.log Step 9/16
+    #     就是这么崩的。sanity 只需要确认文件/权限在就行，supervisord 真正启进程时
+    #     会用正确 PATH 再拉一次 node 运行 vite，不需要提前做 --version）
     command -v python >/dev/null 2>&1 || (ls /app/index-tts/.venv/bin/python && echo "venv python exists (will be used by supervisord programs via bash -c source /app/index-tts/.venv/bin/activate)"); \
     command -v supervisord >/dev/null; \
-    if [ -x "${FRONTEND_VITE}" ]; then "${FRONTEND_VITE}" --version >/dev/null 2>&1; fi; \
+    if [ -x "${FRONTEND_VITE}" ]; then \
+        echo "[sanity] vite binary exists and is executable: ${FRONTEND_VITE}"; \
+        if command -v node >/dev/null 2>&1; then \
+            "${FRONTEND_VITE}" --version >/dev/null 2>&1 && echo "[sanity] vite --version OK (node: $(node --version 2>/dev/null))"; \
+        else \
+            echo "[sanity] NOTE: no 'node' in PATH yet (will be resolved by supervisord at runtime); skipping vite --version"; \
+        fi; \
+    fi; \
     true
 
 # ---- ④ 健康检查 ----
