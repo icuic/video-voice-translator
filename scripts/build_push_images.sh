@@ -448,6 +448,49 @@ prepare_staging_dir() {
     TAR_SIZE=$(du -sh "${PAYLOAD_TAR}" | awk '{print $1}')
     log_ok "payload.tar 已就绪：${PAYLOAD_TAR} = ${TAR_SIZE}（与旧 COPY . /app 相同大小，但 VFS 省 1 层 22G 快照）"
 
+    # ---- 结构性再优化：只保留 3 个文件在 staging 根，其余项目文件删掉 ----
+    # 为什么：Legacy builder（无 BuildKit）在 Sending build context 时，
+    # 会把整个 staging 目录先打 tar → 再解到 /var/lib/docker/tmp/docker-builder-XXXX/ 里。
+    # 现在 staging 根是："项目文件 20G + payload.tar 20G = 40G"，
+    # legacy builder 解出来后 docker-builder-XXXX 也有两份（20G 项目 + 20G tar），
+    # 叠加 /tmp/.vvt-staging 本身 = 40G × 2 = 80G 重复占用，
+    # 217G 盘直接到 216G 100%（build-v1.0.0-20260823-055908.log 就是这么爆的）。
+    #
+    # 修复：payload.tar 已经把所有项目文件打包了一遍，build context 其实只需要 3 个文件：
+    #   (1) payload.tar            （COPY payload.tar /.vvt-payload.tar 用）
+    #   (2) Dockerfile             （docker build -f 读）
+    #   (3) docker-entrypoint.sh   （最后 COPY 到镜像里的启动脚本）
+    # 其余 "项目文件" 全部从 staging 根删除，保证 build context 大小 ≈ 20G 单份，
+    # legacy builder 再解 tar 时 docker-builder-XXXX 也只有 20G（payload.tar 单份）+ 2 个小文件，
+    # 峰值少约 20G → 从 216G → ≈ 160G（217G 盘 73%），稳稳不会爆。
+    log_info "瘦身 staging 根：payload.tar 已打包项目，删除多余源文件，让 build context = payload.tar 单份 ≈20G（省 20G 重复占用）"
+    BEFORE=$(du -sh "${STAGING_DIR}" | awk '{print $1}')
+    (
+        cd "${STAGING_DIR}" || exit 1
+        # find -mindepth 1 -maxdepth 1 列出 staging 根所有直接子项，
+        # 保留：payload.tar、Dockerfile、docker-entrypoint.sh
+        # 其余全部 rm -rf（项目文件、.venv、checkpoints、node_modules、源码、.gitignore …）
+        find . -mindepth 1 -maxdepth 1 ! -name 'payload.tar' ! -name 'Dockerfile' ! -name 'docker-entrypoint.sh' -exec rm -rf {} +
+    )
+    AFTER=$(du -sh "${STAGING_DIR}" | awk '{print $1}')
+    log_ok "staging 瘦身：${BEFORE} → ${AFTER}（后续 legacy builder docker-builder-* 只存 payload.tar 单份，不会再双份叠加）"
+
+    # 再次断言：staging 必须有 3 个必要文件
+    for must in payload.tar Dockerfile docker-entrypoint.sh; do
+        if [[ ! -e "${STAGING_DIR}/${must}" ]]; then
+            log_error "staging 瘦身缺必要文件：${STAGING_DIR}/${must}"
+            exit 1
+        fi
+    done
+    # 断言：staging 里不该再有项目源目录（index-tts、frontend、backend、scripts、configs…），
+    # 否则瘦身失败，build context 还会爆双份
+    if [[ -d "${STAGING_DIR}/index-tts" || -d "${STAGING_DIR}/frontend" || -d "${STAGING_DIR}/backend" || -d "${STAGING_DIR}/scripts" ]]; then
+        log_error "staging 瘦身不彻底，仍存在源目录（会导致 legacy builder 双份叠加爆盘）"
+        log_error "  存在的项目大目录："
+        du -sh "${STAGING_DIR}"/index-tts "${STAGING_DIR}"/frontend "${STAGING_DIR}"/backend "${STAGING_DIR}"/scripts 2>/dev/null || true
+        exit 1
+    fi
+
     export STAGING_READY=1
 }
 
