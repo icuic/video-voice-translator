@@ -1,0 +1,105 @@
+name: Sync GHCR Image to Tencent TCR
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag to sync (e.g. latest, v1.0.0)'
+        required: true
+        default: 'latest'
+      ghcr_repo:
+        description: 'Source GHCR repo (owner/repo format). Defaults to current repo.'
+        required: false
+        default: ''
+      tcr_repo:
+        description: 'Target TCR repo path (after ccr.ccs.tencentyun.com/). Default: <TCR_NAMESPACE>/video-voice-translator'
+        required: false
+        default: ''
+      use_mirror_for_ghcr:
+        description: 'Use ghcr mirror (ghcr.dockerproxy.com) if GHCR direct pull is slow inside China'
+        type: boolean
+        default: true
+
+env:
+  TCR_NAMESPACE: ${{ secrets.TCR_NAMESPACE || 'vvt-public' }}
+
+jobs:
+  sync:
+    name: Pull GHCR -> Re-tag -> Push TCR
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 120
+
+    steps:
+      - name: Resolve source and target
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.tag }}"
+          GHCR_REPO="${{ github.event.inputs.ghcr_repo }}"
+          TCR_REPO_PATH="${{ github.event.inputs.tcr_repo }}"
+          if [[ -z "$GHCR_REPO" ]]; then
+            GHCR_REPO="${GITHUB_REPOSITORY,,}"
+          fi
+          if [[ -z "$TCR_REPO_PATH" ]]; then
+            TCR_REPO_PATH="${TCR_NAMESPACE}/video-voice-translator"
+          fi
+          SRC_PLAIN="ghcr.io/${GHCR_REPO}:${TAG}"
+          SRC_MIRROR="ghcr.dockerproxy.com/${GHCR_REPO}:${TAG}"
+          if [[ "${{ github.event.inputs.use_mirror_for_ghcr }}" == "true" ]]; then
+            SRC_IMAGE="$SRC_MIRROR"
+          else
+            SRC_IMAGE="$SRC_PLAIN"
+          fi
+          TGT_IMAGE="ccr.ccs.tencentyun.com/${TCR_REPO_PATH}:${TAG}"
+          echo "source_plain=${SRC_PLAIN}" >> $GITHUB_OUTPUT
+          echo "source_mirror=${SRC_MIRROR}" >> $GITHUB_OUTPUT
+          echo "source_image=${SRC_IMAGE}" >> $GITHUB_OUTPUT
+          echo "target_image=${TGT_IMAGE}" >> $GITHUB_OUTPUT
+          echo "Source (resolved): $SRC_IMAGE"
+          echo "Target: $TGT_IMAGE"
+
+      - name: Login to GHCR (for direct pull)
+        if: ${{ github.event.inputs.use_mirror_for_ghcr != 'true' }}
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "$GHCR_TOKEN" | docker login ghcr.io \
+            -u "${GITHUB_ACTOR}" \
+            --password-stdin
+
+      - name: Login to Tencent TCR
+        shell: bash
+        env:
+          TCR_USER: ${{ secrets.TCR_USER }}
+          TCR_PASS: ${{ secrets.TCR_PASS }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${TCR_USER:-}" || -z "${TCR_PASS:-}" ]]; then
+            echo "::error::TCR_USER and TCR_PASS secrets must be set for this workflow."
+            exit 1
+          fi
+          echo "$TCR_PASS" | docker login ccr.ccs.tencentyun.com \
+            -u "${TCR_USER}" \
+            --password-stdin
+
+      - name: Pull -> Retag -> Push
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC_IMAGE="${{ steps.resolve.outputs.source_image }}"
+          SRC_PLAIN="${{ steps.resolve.outputs.source_plain }}"
+          TGT_IMAGE="${{ steps.resolve.outputs.target_image }}"
+          echo "=== Pull $SRC_IMAGE ==="
+          docker pull "$SRC_IMAGE" 2>&1 | tail -20
+          echo "=== Re-tag to $SRC_PLAIN (if pulled via mirror) and $TGT_IMAGE ==="
+          if [[ "$SRC_IMAGE" != "$SRC_PLAIN" ]]; then
+            docker tag "$SRC_IMAGE" "$SRC_PLAIN"
+          fi
+          docker tag "$SRC_PLAIN" "$TGT_IMAGE"
+          echo "=== Push $TGT_IMAGE ==="
+          docker push "$TGT_IMAGE" 2>&1 | tail -10
+          echo "=== Done ==="
+          docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}" | head -20

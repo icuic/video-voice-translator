@@ -78,6 +78,8 @@ index-tts/assets/
 *.log
 *.log.*
 install_log*.txt
+nohup.out
+build-v*.log
 
 # Jupyter Notebook
 .ipynb_checkpoints

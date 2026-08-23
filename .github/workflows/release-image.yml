@@ -1,0 +1,134 @@
+name: Build & Push Docker Image (GHCR + TCR)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v1.0.0). If empty, uses latest tag or commit sha.'
+        required: false
+        default: ''
+      skip_ghcr:
+        description: 'Skip pushing to GHCR (ghcr.io)'
+        type: boolean
+        default: false
+      skip_tcr:
+        description: 'Skip pushing to Tencent TCR (ccr.ccs.tencentyun.com)'
+        type: boolean
+        default: false
+      local_only:
+        description: 'Only build locally, do not push anything'
+        type: boolean
+        default: false
+
+env:
+  GHCR_IMAGE_BASE: ghcr.io/${{ github.repository }}
+  TCR_IMAGE_BASE: ccr.ccs.tencentyun.com/${{ secrets.TCR_NAMESPACE || 'vvt-public' }}/video-voice-translator
+  TCR_REGION: ${{ secrets.TCR_REGION || 'ap-guangzhou' }}
+
+jobs:
+  build-and-push:
+    name: Build image on self-hosted HAI runner
+    runs-on: [self-hosted, linux, x64, hai-gpu]
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          INPUT_VER="${{ github.event.inputs.version }}"
+          TAG_VER="${GITHUB_REF_NAME#refs/tags/}"
+          if [[ -n "$INPUT_VER" ]]; then
+            VER="$INPUT_VER"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VER="$TAG_VER"
+          else
+            VER="dev-$(date +%Y%m%d)-$(echo $GITHUB_SHA | cut -c1-7)"
+          fi
+          echo "version=$VER" >> $GITHUB_OUTPUT
+          echo "Resolved version: $VER"
+
+      - name: Validate build prerequisites (index-tts/.venv + checkpoints exist)
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROJECT_ROOT="$(pwd)"
+          echo "=== Check prerequisites ==="
+          for d in index-tts/.venv index-tts/checkpoints; do
+            if [[ ! -d "${PROJECT_ROOT}/${d}" ]]; then
+              echo "::error::Directory ${PROJECT_ROOT}/${d} does not exist."
+              echo "You must first run ./install.sh on this HAI runner to download models and create venv."
+              exit 1
+            fi
+            SIZE=$(du -sh "${PROJECT_ROOT}/${d}" 2>/dev/null | awk '{print $1}')
+            echo "  [OK] ${d}  size=${SIZE}"
+          done
+          df -h / || true
+
+      - name: Login to GHCR (if enabled)
+        if: ${{ !github.event.inputs.skip_ghcr && !github.event.inputs.local_only }}
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "$GHCR_TOKEN" | docker login ghcr.io \
+            -u "${GITHUB_ACTOR}" \
+            --password-stdin
+
+      - name: Login to Tencent TCR (if enabled)
+        if: ${{ !github.event.inputs.skip_tcr && !github.event.inputs.local_only }}
+        shell: bash
+        env:
+          TCR_USER: ${{ secrets.TCR_USER }}
+          TCR_PASS: ${{ secrets.TCR_PASS }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${TCR_USER:-}" || -z "${TCR_PASS:-}" ]]; then
+            echo "::warning::TCR_USER / TCR_PASS secrets not set. Skipping TCR login; push will likely fail unless already logged in."
+          else
+            echo "$TCR_PASS" | docker login ccr.ccs.tencentyun.com \
+              -u "${TCR_USER}" \
+              --password-stdin
+            echo "Logged in to TCR"
+          fi
+
+      - name: Run build_push_images.sh
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          chmod +x ./scripts/build_push_images.sh
+          ARGS=("${VERSION}")
+          if [[ "${{ github.event.inputs.local_only }}" == "true" ]]; then
+            ARGS+=(--local-only)
+          else
+            if [[ "${{ github.event.inputs.skip_ghcr }}" == "true" ]]; then
+              ARGS+=(--skip-ghcr)
+            fi
+            if [[ "${{ github.event.inputs.skip_tcr }}" == "true" ]]; then
+              ARGS+=(--skip-tcr)
+            fi
+          fi
+          ./scripts/build_push_images.sh "${ARGS[@]}"
+
+      - name: Show final images
+        if: always()
+        shell: bash
+        run: |
+          docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}" \
+            | grep -E "(icuic/video-voice|video-voice-translator|${{ secrets.TCR_NAMESPACE || 'vvt-public' }})" || true

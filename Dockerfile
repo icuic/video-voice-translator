@@ -3,46 +3,33 @@
 # 预打包全部模型（IndexTTS2）+ 虚拟环境 + 前端 build 产物
 # 让新用户从 hai-deploy.sh 的 docker 路径 3~8 分钟启动完毕
 #
-# 基础镜像说明：
-#   nvidia/cuda 系列基础镜像自带 CUDA + cuDNN，兼容 PyTorch 2.x
-#   用 runtime 版（~3GB）而非 devel 版（~8GB）控体积
-#   选择与 PyTorch 2.x 官方推荐一致的 CUDA 12.1
-#
-# 构建作者（非项目用户）专用：
-#   请通过 scripts/build_push_images.sh 构建，不要直接 docker build
+# 设计目标：
+#   1) HAI vfs storage driver（无 CoW，每层=父层全量物理复制）下
+#      镜像层数量尽可能少（RUN/COPY 指令越少越好）
+#      避免 24GB × 10 层 = 240GB 把 220G 盘撑爆
+#      -> 下面把项目文件 COPY + 所有 post-install RUN 合并成
+#         【1 COPY + 1 RUN】（总共 2 个新层 + apt 层 + 2×ENTRYPOINT 小层 = 约 5 层）
+#   2) 前端构建全部搬到宿主机（scripts/build_push_images.sh 执行）
+#      容器内不再执行任何 npm install / build，避免 HAI + vfs 下
+#      npm Exit handler never called / 网络失败
+#   3) 使用 runtime 版 nvidia/cuda（~3GB）而非 devel 版（~8GB）
 # ============================================================
 
-# ---- Stage 1: 前端 build（仅在作者本机构建时需要，用户端直接 COPY 产物） ----
-FROM node:20-bookworm-slim AS frontend-build
-WORKDIR /app-src
-COPY frontend /app-src/frontend
-WORKDIR /app-src/frontend
-# 使用 npm ci（要求 package-lock.json 存在），如果失败则 fallback 到 npm install
-RUN if [ -f package-lock.json ]; then npm ci --no-audit --no-fund 2>&1 | tail -5; \
-    else npm install --no-audit --no-fund 2>&1 | tail -5; fi
-RUN npm run build 2>&1 | tail -10
-
-# ---- Stage 2: 最终运行镜像 ----
 FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04 AS runtime
 
-# ---- 构建期参数：作者本机 build 时传入，解决 docker 容器内 apt DNS 失败 / 公网源慢的问题 ----
-#      支持: tencent-intranet | tencent | china | official
-#      - tencent-intranet: mirrors.tencentyun.com（仅腾讯云内网可访问，作者 build 机在腾讯云 HAI 时用）
-#      - tencent: mirrors.cloud.tencent.com（公网）
-#      - china: mirrors.tuna.tsinghua.edu.cn（清华公网兜底）
-#      - official: archive.ubuntu.com（默认）
+# ---- 构建期参数：宿主机 build_push_images.sh 传入，决定容器内 apt 源 ----
 ARG APT_MIRROR=auto
 
-# ---- 基础系统依赖（最小化安装以控制镜像体积，不装 sudo 减少攻击面） ----
 ENV DEBIAN_FRONTEND=noninteractive
 
-# APT 源切换（build 时应用，不污染镜像里的 source.list——用户自己进容器 apt 时用官方源更稳）
+# ---- ① 基础系统依赖（APT 层，第 1 个大层） ----
+# 包含 rsync：给 build_push_images.sh 的 prepare_staging_dir() 在宿主机用
+# 这里的 rsync 也给容器内未来同步挂载卷用
 RUN set -eux; \
     case "${APT_MIRROR}" in \
         tencent-intranet) \
             sed -i 's|http://archive.ubuntu.com/ubuntu/|http://mirrors.tencentyun.com/ubuntu/|g' /etc/apt/sources.list; \
             sed -i 's|http://security.ubuntu.com/ubuntu/|http://mirrors.tencentyun.com/ubuntu/|g' /etc/apt/sources.list; \
-            # NVIDIA CUDA 仓库在腾讯内网经常解析失败，直接禁用 nvidia/cuda 的额外 apt 源（基础镜像里已经带 cuda runtime 了，不需要它）
             rm -f /etc/apt/sources.list.d/*.list 2>/dev/null || true; \
             ;; \
         tencent) \
@@ -56,15 +43,12 @@ RUN set -eux; \
             rm -f /etc/apt/sources.list.d/*.list 2>/dev/null || true; \
             ;; \
         *) \
-            # auto / official: 不改源，但把 nvidia 源移除避免 DNS 失败（基础镜像里已有 cuda）
             rm -f /etc/apt/sources.list.d/*.list 2>/dev/null || true; \
             ;; \
     esac; \
-    # retry 3 次 apt-get update，避免瞬断
     for i in 1 2 3; do \
         if apt-get update -y -q; then break; fi; \
-        echo "[apt] update 第 $i 次失败，10s 后重试..." >&2; \
-        sleep 10; \
+        echo "[apt] update round $i failed, retry in 10s" >&2; sleep 10; \
     done; \
     apt-get install -y -q --no-install-recommends \
         ca-certificates curl wget unzip ffmpeg rsync supervisor \
@@ -85,52 +69,118 @@ ENV LANG=zh_CN.UTF-8 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# ---- 镜像内固定目录结构 ----
 ENV APP_ROOT=/app \
     INDEX_TTS_DIR=/app/index-tts \
     PROJECT_ROOT=/app
 
 WORKDIR /app
 
-# ---- 1) 复制项目代码（不含 index-tts/.venv checkpoints 等大文件，在 .dockerignore 中排除后分别 COPY） ----
+# ---- ② 复制完整项目（包含：源码、index-tts/.venv、index-tts/checkpoints、
+#             frontend/node_modules、frontend/dist、所有脚本） ——第 2 个大层 ----
+# 注意：镜像最终包含的内容应该全部来自 scripts/build_push_images.sh 的
+#       prepare_staging_dir() 产物（.vvt-staging 目录），
+#       该脚本会：
+#         1) 先在宿主机前端目录 npm run build -> frontend/dist
+#         2) 用 rsync 把项目（含 .venv/checkpoints/node_modules/dist）
+#            拷贝到 .vvt-staging，排除 .git、__pycache__、*.pyc、
+#            data/run、*.sock、frontend/.vite、data/outputs、data/uploads 等
+#       docker build 上下文 = .vvt-staging，而不是项目根
 COPY . /app
 
-# ---- 2) 复制预打包的大文件（这些文件在作者本机 build 时直接注入到镜像，不再现场下载） ----
-#      用 2 段 COPY 保证即使层失效也能复用大文件层
-COPY index-tts/.venv /app/index-tts/.venv
-COPY index-tts/checkpoints /app/index-tts/checkpoints
-
-# ---- 3) 复制前端 build 产物（如果存在，优先用 build 好的静态文件） ----
-#      如果作者没跑 Stage 1，就会用 frontend/ 自带的 node_modules 运行 vite
-COPY --from=frontend-build --chown=root:root /app-src/frontend/dist /app/frontend/dist
-
-# ---- 4) 前端 node_modules（vite 依赖） ----
-COPY frontend/node_modules /app/frontend/node_modules
-
-# ---- 5) 保证脚本可执行 + 所有 APP_ROOT 目录权限交给 vvt 用户可读可执行（不影响运行时 Web 写 .env/data） ----
-RUN chmod +x /app/hai-deploy.sh /app/configure.sh /app/update_project.sh \
-    /app/install.sh /app/manage-supervisor.sh 2>/dev/null; \
+# ---- ③ 合并所有 post-install 动作（chmod/chown/权限/预置目录/dist 校验/
+#        python软链/node软链/预置.env） —— 第 3 个大层 ----
+# 为什么都合并成 1 个 RUN：
+#   vfs 每 1 个 RUN/COPY = 1 次全父层物理复制 = 24GB * 层数
+#   拆成 8 个 RUN/COPY = 24 * 8 = 192GB，220G 盘直接炸
+#   合并成 1 个 RUN = 24 * 1 = 24GB（加父层 32G 总 ~56G）
+RUN set -eux; \
+    # (A) 脚本可执行
+    for s in hai-deploy.sh configure.sh update_project.sh install.sh manage-supervisor.sh; do \
+        [ -x "/app/$s" ] || chmod +x "/app/$s" 2>/dev/null || true; \
+    done; \
     find /app/scripts -type f -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true; \
-    chown -R vvt:vvt /app
+    \
+    # (B) 给 PyTorch / index-tts 用的 python 软链（与宿主机 install.sh 行为一致）
+    VENV_PY="/app/index-tts/.venv/bin/python"; \
+    if [ -x "${VENV_PY}" ] && [ ! -e /usr/local/bin/python ]; then \
+        ln -sf "${VENV_PY}" /usr/local/bin/python; \
+    fi; \
+    if [ -x "${VENV_PY}" ] && [ ! -e /usr/local/bin/activate-tts ]; then \
+        ln -sf /app/index-tts/.venv/bin/activate /usr/local/bin/activate-tts 2>/dev/null || true; \
+    fi; \
+    \
+    # (C) 前端 vite/node 软链：让 docker-entrypoint.sh 的 vite preview / vite dev 能全局找到 vite
+    FRONTEND_VITE="/app/frontend/node_modules/.bin/vite"; \
+    FRONTEND_NODE_MODS="/app/frontend/node_modules"; \
+    if [ -d "${FRONTEND_NODE_MODS}/.bin" ]; then \
+        export PATH="${FRONTEND_NODE_MODS}/.bin:${PATH}"; \
+        for bin_node in vite tsc node npm npx; do \
+            if [ -x "${FRONTEND_NODE_MODS}/.bin/${bin_node}" ]; then \
+                [ -e "/usr/local/bin/${bin_node}" ] || ln -sf "${FRONTEND_NODE_MODS}/.bin/${bin_node}" "/usr/local/bin/${bin_node}" 2>/dev/null || true; \
+            fi; \
+        done; \
+    fi; \
+    [ -x "${FRONTEND_VITE}" ] || true; \
+    \
+    # (D) supervisor / 运行时 空目录：保证容器首次启（无挂载卷）时也能写
+    mkdir -p /app/data/logs/supervisor \
+             /app/data/run \
+             /app/data/uploads \
+             /app/data/outputs \
+             /app/data/temp \
+             /app/data/stats \
+             /app/env \
+             /app/tmp; \
+    \
+    # (E) 预置空 .env（如果未提供；运行时挂载 /env-mount/.env 会覆盖）
+    if [ ! -f /app/.env ] && [ -f /app/.env.example ]; then \
+        gosu vvt cp /app/.env.example /app/.env; \
+    fi; \
+    \
+    # (F) 权限：APP_ROOT 下除 data/env 挂载点专属目录以外，其余 vvt:vvt 可读
+    #     注意：用户侧 docker-compose.yml 会把 /app/data /app/env 挂载成卷，
+    #     所以这里即使 chown 也会被覆盖，但容器首次 run（没挂载卷）时要有权限写
+    chown -R vvt:vvt /app; \
+    chmod 755 /app /app/index-tts /app/frontend /app/backend /app/scripts 2>/dev/null || true; \
+    \
+    # (G) 前端 dist 合法性最终校验（唯一来源：宿主机 npm run build 产物 COPY 进镜像）
+    #     合法：index.html 存在 + 文件数 > 1（Vite 正常 3 个文件）
+    #     不合法：清除残留占位，docker-entrypoint.sh 会 fallback 到 5173 vite dev server
+    HOST_DIST="/app/frontend/dist"; \
+    if [ -f "${HOST_DIST}/index.html" ] && [ "$(find "${HOST_DIST}" -type f | wc -l)" -gt 1 ]; then \
+        DIST_N="$(find "${HOST_DIST}" -type f | wc -l)"; \
+        echo "[frontend dist] use HOST-built dist (${HOST_DIST}/index.html OK, ${DIST_N} files)"; \
+        echo "[frontend dist] port 8080 will be served by vite preview"; \
+    else \
+        echo "[frontend dist] WARNING: missing or invalid host-built dist"; \
+        echo "[frontend dist] runtime will fallback to vite dev server on port 5173"; \
+        rm -rf "${HOST_DIST}"; \
+    fi; \
+    echo "[frontend dist] final check:"; \
+    if [ -f /app/frontend/dist/index.html ]; then \
+        echo "  dist/index.html exists -> OK (port 8080 will be served)"; \
+    else \
+        echo "  dist/index.html NOT found -> runtime fallback to 5173 (or re-run scripts/build_push_images.sh)"; \
+    fi; \
+    \
+    # (H) 构建版本标记：镜像里写入 BUILD_VERSION.txt，用户进容器 `cat /app/BUILD_VERSION.txt` 就能看版本
+    BUILD_VERSION_ARG="${BUILD_VERSION:-unknown}"; \
+    echo "BUILD_VERSION=${BUILD_VERSION_ARG}"  > /app/BUILD_VERSION.txt; \
+    echo "BUILD_TIME=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> /app/BUILD_VERSION.txt; \
+    echo "APT_MIRROR=${APT_MIRROR:-auto}"        >> /app/BUILD_VERSION.txt; \
+    chown vvt:vvt /app/BUILD_VERSION.txt 2>/dev/null || true; \
+    \
+    # (I) 最后：快速 sanity check（python / vite / supervisord 真的存在 + 可执行）
+    command -v python >/dev/null 2>&1 || (ls /app/index-tts/.venv/bin/python && echo "venv python exists (will be used by supervisord programs via bash -c source /app/index-tts/.venv/bin/activate)"); \
+    command -v supervisord >/dev/null; \
+    if [ -x "${FRONTEND_VITE}" ]; then "${FRONTEND_VITE}" --version >/dev/null 2>&1; fi; \
+    true
 
-# ---- 6) 预置空 .env（如果未提供；运行时会用挂载卷覆盖） ----
-USER vvt
-RUN if [ ! -f /app/.env ] && [ -f /app/.env.example ]; then \
-        cp /app/.env.example /app/.env; \
-    fi
-USER root
-
-# ---- 7) 给 supervisor 在镜像里有个默认 PID 目录 ----
-RUN mkdir -p /app/data/logs/supervisor /app/data/run /app/data/uploads /app/data/outputs /app/data/temp /app/data/stats
-
-# ---- 8) 健康检查 ----
+# ---- ④ 健康检查 ----
 HEALTHCHECK --interval=60s --timeout=15s --start-period=90s --retries=3 \
     CMD curl -fsSL http://127.0.0.1:8000/health >/dev/null 2>&1 || exit 1
 
-# ---- 9) 容器入口：镜像内自启 supervisord（后端 8000 + 前端 vite preview） ----
-#    入口脚本会：
-#      - 如果宿主机给了 /env-mount/.env，就替换 /app/.env（保持 Key 不丢）
-#      - 启动 supervisord 管 backend + frontend
+# ---- ⑤ 入口：supervisord（backend 8000 + vite preview(dev) on 8080/5173） ----
 ENV ENV_PROJECT_ROOT=/app \
     PROJECT_ROOT=/app \
     INDEX_TTS_DIR=/app/index-tts \
@@ -138,12 +188,14 @@ ENV ENV_PROJECT_ROOT=/app \
     BACKEND_HOST=0.0.0.0 \
     BACKEND_PORT=8000 \
     FRONTEND_HOST=0.0.0.0 \
-    FRONTEND_PORT=5173
+    FRONTEND_PORT=8080
 
-EXPOSE 5173 8000
+EXPOSE 8080 5173 8000
 
 COPY docker-entrypoint.sh /usr/local/bin/vvt-entrypoint.sh
-RUN chmod +x /usr/local/bin/vvt-entrypoint.sh
+RUN set -eux; \
+    chmod +x /usr/local/bin/vvt-entrypoint.sh; \
+    command -v vvt-entrypoint.sh >/dev/null
 
 ENTRYPOINT ["/usr/local/bin/vvt-entrypoint.sh"]
 CMD ["supervisord"]

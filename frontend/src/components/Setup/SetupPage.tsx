@@ -18,7 +18,7 @@ export function SetupPage({ onConfigured, allowSkip = false }: SetupPageProps) {
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('');
   const [temperature, setTemperature] = useState('');
-  const [timeout, setTimeout] = useState('');
+  const [timeoutMs, setTimeoutMs] = useState('');
   const [restart, setRestart] = useState(true);
 
   useEffect(() => {
@@ -30,7 +30,7 @@ export function SetupPage({ onConfigured, allowSkip = false }: SetupPageProps) {
           setBaseUrl(s.current.llm_base_url || '');
           setModel(s.current.llm_model || '');
           if (s.current.llm_temperature) setTemperature(s.current.llm_temperature);
-          if (s.current.llm_timeout) setTimeout(s.current.llm_timeout);
+          if (s.current.llm_timeout) setTimeoutMs(s.current.llm_timeout);
         }
       } catch (e: any) {
         setError(e?.response?.data?.detail || e?.message || '无法获取配置状态，请刷新重试');
@@ -67,9 +67,9 @@ export function SetupPage({ onConfigured, allowSkip = false }: SetupPageProps) {
         return;
       }
     }
-    if (timeout.trim()) {
-      const n = parseInt(timeout, 10);
-      if (!/^[1-9][0-9]*$/.test(timeout.trim()) || !Number.isFinite(n)) {
+    if (timeoutMs.trim()) {
+      const n = parseInt(timeoutMs, 10);
+      if (!/^[1-9][0-9]*$/.test(timeoutMs.trim()) || !Number.isFinite(n)) {
         setError('超时时间必须是正整数');
         return;
       }
@@ -86,7 +86,7 @@ export function SetupPage({ onConfigured, allowSkip = false }: SetupPageProps) {
         llm_api_key: apiKey.trim(),
         llm_model: model.trim(),
         llm_temperature: temperature.trim() || undefined,
-        llm_timeout: timeout.trim() || undefined,
+        llm_timeout: timeoutMs.trim() || undefined,
         restart: payloadRestart,
       });
       setResult(r);
@@ -96,7 +96,7 @@ export function SetupPage({ onConfigured, allowSkip = false }: SetupPageProps) {
           const hardDeadline = Date.now() + (willRestart ? 120_000 : 8_000);
           const initialDelay = willRestart ? 3500 : 200;
           let backoff = 1200;
-          await new Promise((res) => setTimeout(res, initialDelay));
+          await new Promise<void>((res) => setTimeout(() => res(), initialDelay));
           while (Date.now() < hardDeadline) {
             try {
               const s: SetupStatus = await setupService.getStatus();
@@ -115,7 +115,7 @@ export function SetupPage({ onConfigured, allowSkip = false }: SetupPageProps) {
             }
             const waitMs = Math.min(backoff, 4000);
             backoff = Math.round(backoff * 1.25);
-            await new Promise((res) => setTimeout(res, waitMs));
+            await new Promise<void>((res) => setTimeout(() => res(), waitMs));
           }
           // 兜底：即便后端真的起不来，也不要卡死在 SetupPage
           try { window.location.href = '/'; } catch (_) { /* noop */ }
@@ -258,8 +258,8 @@ export function SetupPage({ onConfigured, allowSkip = false }: SetupPageProps) {
                 <input
                   type="text"
                   inputMode="numeric"
-                  value={timeout}
-                  onChange={(e) => setTimeout(e.target.value)}
+                  value={timeoutMs}
+                  onChange={(e) => setTimeoutMs(e.target.value)}
                   placeholder="300"
                   className="w-full px-4 py-2.5 rounded-lg bg-slate-900/80 text-white placeholder-slate-500 border border-slate-700 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/40 outline-none transition"
                 />

@@ -30,7 +30,9 @@ __pycache__/
 # 前端
 frontend/node_modules/.cache
 frontend/.vite
-frontend/dist
+# 注意：frontend/dist **不要 ignore！** 作者跑 scripts/build_push_images.sh 时会在宿主机构建 dist，
+#       并通过 COPY . /app 直接注入镜像（优先级最高）。
+#       （用户源码跑 install.sh 时也不会生成 frontend/dist，所以 ignore 与否都不影响用户侧。
 # 注意：node_modules 本身我们要 COPY，所以不 ignore 整个 node_modules
 
 # 安装日志 & 数据目录（用户数据不进镜像）
@@ -39,6 +41,8 @@ data/uploads/*
 data/outputs/*
 data/temp/*
 data/logs/*
+data/run/*
+**/*.sock
 !data/**/.gitkeep
 
 # IDE

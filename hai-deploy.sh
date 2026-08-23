@@ -69,6 +69,18 @@ done
 
 trap 'log_error "部署中断，第 $LINENO 行，请把上面完整报错截图发作者或提 Issue"' ERR
 
+IS_ROOT=0
+if [[ "$(id -u)" -eq 0 ]]; then
+    IS_ROOT=1
+fi
+as_root() {
+    if [[ "$IS_ROOT" == "1" ]]; then
+        "$@"
+    else
+        sudo -n "$@" 2>/dev/null || sudo "$@"
+    fi
+}
+
 banner() {
     cat <<'BANNER'
    ___   ______   ______   __    __  ________
@@ -109,8 +121,8 @@ ensure_os_deps() {
     done
     if [[ -n "$missing" ]]; then
         log_info "缺失依赖: $missing，正在 apt-get 安装..."
-        sudo DEBIAN_FRONTEND=noninteractive apt-get update -y -q || true
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+        as_root env DEBIAN_FRONTEND=noninteractive apt-get update -y -q || true
+        as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
             git curl wget ca-certificates ffmpeg python3 python3-venv python3-pip supervisor unzip rsync || \
             log_warn "apt 部分安装失败，稍后会自动尝试其他方式"
     else
@@ -123,9 +135,21 @@ ensure_os_deps() {
         if command -v apt-get >/dev/null 2>&1; then
             (
                 set +e
-                sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends docker.io docker-compose-v2 containerd 2>/dev/null
-                sudo systemctl enable docker 2>/dev/null || true
-                sudo systemctl start docker 2>/dev/null || true
+                as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends docker.io docker-compose-v2 containerd 2>&1 | tail -10
+                if command -v systemctl >/dev/null 2>&1; then
+                    as_root systemctl enable docker 2>/dev/null || true
+                    as_root systemctl start docker 2>/dev/null || true
+                else
+                    # HAI LXC 环境通常没有 systemd，尝试直接起 dockerd
+                    if [[ ! -S /var/run/docker.sock ]]; then
+                        as_root mkdir -p /var/run /var/lib/docker /var/log
+                        as_root /usr/bin/dockerd --storage-driver=overlay2 \
+                            --iptables=false --ip-masq=false --bridge=none \
+                            --pidfile=/tmp/dockerd-deploy.pid \
+                            > /tmp/dockerd-deploy.log 2>&1 &
+                        sleep 5
+                    fi
+                fi
                 sleep 2
             ) || true
         fi
@@ -134,12 +158,25 @@ ensure_os_deps() {
             SKIP_DOCKER=1
         else
             # 免 sudo docker（把当前用户加进 docker 组，重新登录生效；本次部署用 sudo 兜底）
-            sudo usermod -aG docker "$(whoami)" 2>/dev/null || true
-            # 统一：当前用户无 docker 权限时统一加 sudo（部署期间免重新登录）
+            if [[ "$IS_ROOT" != "1" ]]; then
+                as_root usermod -aG docker "$(whoami)" 2>/dev/null || true
+            fi
+            # 统一：当前用户无 docker 权限时统一加 as_root（部署期间免重新登录）
             if ! (docker info >/dev/null 2>&1); then
-                if ! (sudo -n docker info >/dev/null 2>&1); then
-                    # 若 sudo 也连不上（daemon 没起来），尝试重启
-                    sudo systemctl restart docker 2>/dev/null || true
+                if ! (as_root docker info >/dev/null 2>&1); then
+                    # 若 as_root 也连不上（daemon 没起来），尝试重启
+                    if command -v systemctl >/dev/null 2>&1; then
+                        as_root systemctl restart docker 2>/dev/null || true
+                    elif [[ ! -S /var/run/docker.sock ]]; then
+                        as_root mkdir -p /var/run /var/lib/docker /var/log
+                        as_root pkill -9 dockerd 2>/dev/null || true
+                        sleep 1
+                        as_root /usr/bin/dockerd --storage-driver=overlay2 \
+                            --iptables=false --ip-masq=false --bridge=none \
+                            --pidfile=/tmp/dockerd-deploy.pid \
+                            > /tmp/dockerd-deploy.log 2>&1 &
+                        sleep 5
+                    fi
                     sleep 3
                 fi
             fi
@@ -151,31 +188,48 @@ ensure_os_deps() {
     # nvidia-container-toolkit 检测（GPU Docker 必需）
     DOCKER_RUNTIME_OK=0
     if command -v docker >/dev/null 2>&1; then
-        if sudo docker run --rm --gpus all --runtime=nvidia -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+        local docker_test_cmd
+        if (docker info >/dev/null 2>&1); then
+            docker_test_cmd="docker"
+        else
+            docker_test_cmd="as_root docker"
+        fi
+        if $docker_test_cmd run --rm --gpus all --runtime=nvidia -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
                 nvidia/cuda:12.1.1-base-ubuntu22.04 nvidia-smi >/dev/null 2>&1; then
             DOCKER_RUNTIME_OK=1
             log_success "Docker GPU Runtime 正常（nvidia-container-toolkit 已配置）"
-        elif sudo docker info 2>/dev/null | grep -q nvidia; then
+        elif $docker_test_cmd info 2>/dev/null | grep -q nvidia; then
             DOCKER_RUNTIME_OK=1
             log_success "Docker nvidia runtime 已启用"
         else
             log_warn "Docker nvidia 运行时未配置，尝试自动安装..."
             (
                 set +e
-                curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg 2>/dev/null
+                curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | as_root gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg 2>/dev/null
                 curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
                     sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-                    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null 2>&1
-                sudo apt-get update -y -q 2>&1 | tail -3
-                sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends nvidia-container-toolkit 2>&1 | tail -5
-                sudo nvidia-ctk runtime configure --runtime=docker 2>/dev/null
-                sudo systemctl restart docker 2>/dev/null
+                    as_root tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null 2>&1
+                as_root env DEBIAN_FRONTEND=noninteractive apt-get update -y -q 2>&1 | tail -3
+                as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends nvidia-container-toolkit 2>&1 | tail -5
+                as_root nvidia-ctk runtime configure --runtime=docker 2>/dev/null
+                if command -v systemctl >/dev/null 2>&1; then
+                    as_root systemctl restart docker 2>/dev/null
+                else
+                    as_root pkill -HUP dockerd 2>/dev/null || true
+                fi
+                sleep 3
             ) || log_warn "自动安装 nvidia runtime 失败，跳过 Docker 路径（走源码兜底）"
             # 再检测一次
-            if sudo docker run --rm --gpus all nvidia/cuda:12.1.1-base-ubuntu22.04 nvidia-smi >/dev/null 2>&1; then
+            if $docker_test_cmd run --rm --gpus all nvidia/cuda:12.1.1-base-ubuntu22.04 nvidia-smi >/dev/null 2>&1; then
                 DOCKER_RUNTIME_OK=1
             else
-                SKIP_DOCKER=1
+                log_warn "nvidia runtime 仍不可用，尝试跳过 runtime 检测直接判断 nvidia-ctk 是否已安装..."
+                if command -v nvidia-ctk >/dev/null 2>&1 || command -v nvidia-container-cli >/dev/null 2>&1; then
+                    DOCKER_RUNTIME_OK=1
+                    log_success "nvidia-container-toolkit 已安装，假设 Docker GPU 可用（跳过 pull 验证节省时间）"
+                else
+                    SKIP_DOCKER=1
+                fi
             fi
         fi
     fi
@@ -232,28 +286,18 @@ deploy_with_docker() {
     log_section "路径 A：使用 Docker 预打包镜像（首选，最快 3~8 分钟）"
     cd "${PROJECT_ROOT}"
 
-    # ---- 统一 docker 调用：当前用户无权限则自动加 sudo ----
-    #      HAI 默认 ubuntu 不在 docker 组，usermod 要重登录生效，部署期间直接 sudo 最稳
-    local DOCKER_SUDO=""
-    if ! (docker info >/dev/null 2>&1); then
-        if (sudo -n docker info >/dev/null 2>&1); then
-            DOCKER_SUDO="sudo"
-            log_info "当前用户无 docker 权限，自动改用 sudo docker"
-        fi
-    fi
     run_docker() {
-        if [[ -n "$DOCKER_SUDO" ]]; then
-            $DOCKER_SUDO docker "$@"
-        else
+        if (docker info >/dev/null 2>&1); then
             docker "$@"
+        else
+            as_root docker "$@"
         fi
     }
     run_compose() {
-        # docker compose v2 命令前加同样的 sudo 前缀
-        if [[ -n "$DOCKER_SUDO" ]]; then
-            $DOCKER_SUDO docker compose "$@"
-        else
+        if (docker info >/dev/null 2>&1); then
             docker compose "$@"
+        else
+            as_root docker compose "$@"
         fi
     }
 
@@ -261,11 +305,9 @@ deploy_with_docker() {
     local dc_available=1
     if ! (run_compose version >/dev/null 2>&1); then
         if command -v docker-compose >/dev/null 2>&1; then
-            # docker-compose 独立二进制，也同样判断是否加 sudo
-            if ! (docker-compose version >/dev/null 2>&1) && [[ -n "$DOCKER_SUDO" ]]; then
-                DOCKER_COMPOSE_BIN="sudo docker-compose"
-            else
-                DOCKER_COMPOSE_BIN="docker-compose"
+            DOCKER_COMPOSE_BIN="docker-compose"
+            if ! (docker-compose version >/dev/null 2>&1) && ! (docker info >/dev/null 2>&1); then
+                DOCKER_COMPOSE_BIN="as_root docker-compose"
             fi
         else
             log_warn "docker compose v2 不可用，尝试手动 docker run"
@@ -273,18 +315,40 @@ deploy_with_docker() {
         fi
     fi
 
+    # 智能选择镜像拉取源：国内网络自动加 ghproxy 镜像代理
+    local GHCR_MIRROR=""
+    if [[ -z "${GHCR_MIRROR:-}" ]] && command -v curl >/dev/null 2>&1; then
+        if ! (curl -fsSL --max-time 5 https://ghcr.io >/dev/null 2>&1); then
+            if (curl -fsSL --max-time 5 https://ghcr.dockerproxy.com >/dev/null 2>&1); then
+                GHCR_MIRROR="ghcr.dockerproxy.com"
+            elif (curl -fsSL --max-time 5 https://docker.1ms.run >/dev/null 2>&1); then
+                GHCR_MIRROR="docker.1ms.run"
+            fi
+        fi
+    fi
+    local GHCR_IMAGE_RESOLVED="${GHCR_IMAGE_DEFAULT}"
+    if [[ -n "${GHCR_MIRROR}" && "${GHCR_IMAGE_DEFAULT}" == ghcr.io/* ]]; then
+        GHCR_IMAGE_RESOLVED="${GHCR_MIRROR}/${GHCR_IMAGE_DEFAULT#ghcr.io/}"
+        log_info "ghcr.io 直连可能较慢，自动使用镜像代理 ${GHCR_MIRROR}（实际拉取 ${GHCR_IMAGE_RESOLVED}，成功后 retag 为 ${GHCR_IMAGE_DEFAULT}）"
+    fi
+
     TRY_COUNT=0
     DEPLOY_OK=0
+    declare -a IMAGE_CANDIDATES=()
+    IMAGE_CANDIDATES+=("${TCR_IMAGE_DEFAULT}")
+    IMAGE_CANDIDATES+=("${GHCR_IMAGE_RESOLVED}")
+    if [[ "${GHCR_IMAGE_RESOLVED}" != "${GHCR_IMAGE_DEFAULT}" ]]; then
+        IMAGE_CANDIDATES+=("${GHCR_IMAGE_DEFAULT}")
+    fi
 
-    for IMAGE in "${GHCR_IMAGE_DEFAULT}" "${TCR_IMAGE_DEFAULT}"; do
+    for IMAGE in "${IMAGE_CANDIDATES[@]}"; do
         TRY_COUNT=$((TRY_COUNT + 1))
-        log_info "[$TRY_COUNT/2] 尝试拉取镜像: ${IMAGE}"
+        log_info "[$TRY_COUNT/${#IMAGE_CANDIDATES[@]}] 尝试拉取镜像: ${IMAGE}"
 
-        # --- Step 1: pull（带进度，静默除最后几行） --
         local pull_start
         pull_start=$(date +%s)
         set +e
-        run_docker pull "${IMAGE}" 2>&1 | tail -5
+        run_docker pull "${IMAGE}" 2>&1 | tail -10
         local rc=${PIPESTATUS[0]}
         set -e
         local pull_end
@@ -295,11 +359,18 @@ deploy_with_docker() {
         fi
         log_success "镜像 ${IMAGE} 拉取成功，耗时 $((pull_end - pull_start))s"
 
+        # 如果用了 ghcr 镜像代理，retag 回标准名字，方便 docker-compose.yml 里默认值匹配
+        local EFFECTIVE_IMAGE="${IMAGE}"
+        if [[ "${IMAGE}" == "${GHCR_IMAGE_RESOLVED}" && "${GHCR_IMAGE_RESOLVED}" != "${GHCR_IMAGE_DEFAULT}" ]]; then
+            run_docker tag "${IMAGE}" "${GHCR_IMAGE_DEFAULT}" 2>/dev/null || true
+            EFFECTIVE_IMAGE="${GHCR_IMAGE_DEFAULT}"
+        fi
+
         # --- Step 2: 根据可用工具启动容器 --
         set +e
         if [[ "$dc_available" == "1" && -f "${PROJECT_ROOT}/docker-compose.yml" ]]; then
             log_info "使用 docker-compose 启动（docker-compose.yml 已配置端口/卷/GPU）"
-            VVT_IMAGE="${IMAGE}" run_compose up -d 2>&1 | tail -10
+            VVT_IMAGE="${EFFECTIVE_IMAGE}" run_compose up -d 2>&1 | tail -15
             rc=$?
         else
             log_info "回退 docker run 直接启动"
@@ -312,7 +383,7 @@ deploy_with_docker() {
                 -v "${PROJECT_ROOT}/vvt-data:/app/data" \
                 -v "${PROJECT_ROOT}/vvt-env:/app/env" \
                 --shm-size=8g \
-                "${IMAGE}" 2>&1 | tail -5
+                "${EFFECTIVE_IMAGE}" 2>&1 | tail -10
             rc=$?
         fi
         set -e
@@ -321,7 +392,7 @@ deploy_with_docker() {
             DEPLOY_OK=1
             log_success "Docker 容器 vvt 已启动"
             export VVT_DEPLOY_MODE="docker"
-            export VVT_RUNTIME_IMAGE="${IMAGE}"
+            export VVT_RUNTIME_IMAGE="${EFFECTIVE_IMAGE}"
             break
         else
             log_warn "容器启动失败，尝试下一个镜像源..."
@@ -347,7 +418,9 @@ deploy_with_source() {
     # 追加 MOTD
     log_info "追加 SSH 登录欢迎横幅（MOTD）..."
     MOTD_SCRIPT="${PROJECT_ROOT}/scripts/install/setup_motd.sh"
-    if sudo -n true 2>/dev/null; then
+    if [[ "$IS_ROOT" == "1" ]]; then
+        bash "${MOTD_SCRIPT}" 2>&1 | tail -5 || log_warn "MOTD 追加失败（不影响使用），可稍后手动执行：bash ${MOTD_SCRIPT}"
+    elif sudo -n true 2>/dev/null; then
         sudo bash "${MOTD_SCRIPT}" 2>&1 | tail -5 || log_warn "MOTD 追加失败（不影响使用），可稍后手动执行：sudo ${MOTD_SCRIPT}"
     fi
     export VVT_DEPLOY_MODE="source"
@@ -361,20 +434,49 @@ show_finish() {
                   curl -fsSL --max-time 3 http://169.254.0.23/latest/meta-data/public-ipv4 2>/dev/null || \
                   hostname -I 2>/dev/null | awk '{print $1}' || echo "<实例公网IP>")"
     fi
+
+    local MODE="${VVT_DEPLOY_MODE:-unknown}"
+    local FRONTEND_PRIMARY_PORT="5173"
+    local FRONTEND_BACKUP_PORT=""
+    if [[ "${MODE}" == "docker" ]]; then
+        FRONTEND_PRIMARY_PORT="8080"
+        FRONTEND_BACKUP_PORT="5173"
+    else
+        FRONTEND_PRIMARY_PORT="5173"
+        FRONTEND_BACKUP_PORT=""
+    fi
+    local PRIMARY_URL="http://${IP_HINT}:${FRONTEND_PRIMARY_PORT}"
+    local DOCKER_PREFIX=""
+    if (docker info >/dev/null 2>&1); then
+        DOCKER_PREFIX="docker"
+    else
+        DOCKER_PREFIX="as_root docker"
+    fi
+
     cat <<NEXT
 ┌────────────────────────────────────────────────────────────┐
-│ 🎉 部署方式： ${VVT_DEPLOY_MODE:-unknown}
+│ 🎉 部署方式： ${MODE}
 │ 💡 运行镜像： ${VVT_RUNTIME_IMAGE:-源码编译模式}
 ├────────────────────────────────────────────────────────────┤
 │ 🌐 访问地址（首次打开会自动跳到配置页）                       │
 │                                                             │
-│   前端翻译界面：  http://${IP_HINT}:8080                    │
-│   前端备用端口：  http://${IP_HINT}:5173                    │
+NEXT
+    if [[ "${MODE}" == "docker" ]]; then
+        cat <<DOCKER_ADDR
+│   前端翻译界面：  http://${IP_HINT}:8080   （首选，静态预览）   │
+│   前端备用端口：  http://${IP_HINT}:5173   （dev server）     │
+DOCKER_ADDR
+    else
+        cat <<SRC_ADDR
+│   前端翻译界面：  http://${IP_HINT}:5173   （vite dev）       │
+SRC_ADDR
+    fi
+    cat <<NEXT2
 │   后端 API 文档： http://${IP_HINT}:8000/docs               │
 ├────────────────────────────────────────────────────────────┤
 │ 🔑 配置 LLM（三选一，新手推荐方式 A）                         │
 │                                                             │
-│   A. 👶 Web UI 引导页（首选）：直接打开上面 8080 地址         │
+│   A. 👶 Web UI 引导页（首选）：直接打开上面 ${FRONTEND_PRIMARY_PORT} 地址
 │      自动跳 /setup → 填 3 项 → 勾选「立即重启」             │
 │                                                             │
 │   B. 📟 SSH 命令行向导：                                     │
@@ -382,20 +484,30 @@ show_finish() {
 │                                                             │
 │   C. ✍️  手动编辑 .env：                                      │
 │      nano ${PROJECT_ROOT}/.env 填 3 件套 →                  │
+NEXT2
+    if [[ "${MODE}" == "docker" ]]; then
+        cat <<DOCKER_RESTART
+│      ${DOCKER_PREFIX} restart vvt  (Docker 模式)            │
+DOCKER_RESTART
+    else
+        cat <<SRC_RESTART
 │      ./manage-supervisor.sh restart  (源码模式)             │
-│      或 sudo docker restart vvt (Docker 模式)               │
+SRC_RESTART
+    fi
+
+    cat <<NEXT3
 ├────────────────────────────────────────────────────────────┤
-│ 🧰 日常命令（${VVT_DEPLOY_MODE:-docker} 模式）                │
+│ 🧰 日常命令（${MODE} 模式）                                  │
 │                                                             │
-NEXT
-    if [[ "${VVT_DEPLOY_MODE:-docker}" == "docker" ]]; then
+NEXT3
+    if [[ "${MODE}" == "docker" ]]; then
         cat <<DOCKERCMDS
-│   查看状态：  sudo docker ps | grep vvt                      │
-│   查看日志：  sudo docker logs -f vvt                        │
-│   重启服务：  sudo docker restart vvt                        │
-│   服务停止：  sudo docker stop vvt                           │
-│   升级版本：  sudo docker pull ${VVT_RUNTIME_IMAGE_GLOBAL:-ghcr.io/icuic/video-voice-translator:latest}
-│                sudo docker rm -f vvt && 重跑本脚本或 compose up -d
+│   查看状态：  ${DOCKER_PREFIX} ps | grep vvt                │
+│   查看日志：  ${DOCKER_PREFIX} logs -f vvt                  │
+│   重启服务：  ${DOCKER_PREFIX} restart vvt                  │
+│   服务停止：  ${DOCKER_PREFIX} stop vvt                     │
+│   升级版本：  ${DOCKER_PREFIX} pull ${VVT_RUNTIME_IMAGE_GLOBAL:-ghcr.io/icuic/video-voice-translator:latest}
+│                ${DOCKER_PREFIX} rm -f vvt && 重跑本脚本或 compose up -d
 DOCKERCMDS
     else
         cat <<SRC
@@ -409,8 +521,8 @@ SRC
 └────────────────────────────────────────────────────────────┘
 FOOT
     echo ""
-    log_info "提示：如果刚刚部署完成，首次访问 8080 页面会稍慢（Whisper/TTS 模型预热中，1 分钟内就好）"
-    log_info "配置页 /setup 可以随时打开：http://${IP_HINT}:8080/setup"
+    log_info "提示：如果刚刚部署完成，首次访问 ${FRONTEND_PRIMARY_PORT} 页面会稍慢（Whisper/TTS 模型预热中，1 分钟内就好）"
+    log_info "配置页 /setup 可以随时打开：${PRIMARY_URL}/setup"
 }
 
 main() {
@@ -434,7 +546,11 @@ main() {
 
     show_finish
     echo ""
-    log_success "🎉 全部完成！打开 http://<实例公网IP>:8080 开始使用吧"
+    local FINAL_PORT="5173"
+    if [[ "${VVT_DEPLOY_MODE:-}" == "docker" ]]; then
+        FINAL_PORT="8080"
+    fi
+    log_success "🎉 全部完成！打开 http://<实例公网IP>:${FINAL_PORT} 开始使用吧"
 }
 
 # 供 show_finish 引用

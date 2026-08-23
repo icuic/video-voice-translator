@@ -37,6 +37,39 @@ log_warn()    { echo -e "${COLOR_YELLOW}[WARN]${COLOR_RESET} $*"; }
 log_error()   { echo -e "${COLOR_RED}[ERR]${COLOR_RESET} $*" >&2; }
 log_section() { echo ""; echo -e "${COLOR_BOLD}${COLOR_CYAN}▶ $*${COLOR_RESET}"; echo ""; }
 
+IS_ROOT=0
+if [[ "$(id -u)" -eq 0 ]]; then
+    IS_ROOT=1
+fi
+as_root() {
+    if [[ "$IS_ROOT" == "1" ]]; then
+        "$@"
+    else
+        sudo -n "$@" 2>/dev/null || sudo "$@"
+    fi
+}
+
+# ---- 并发互斥锁：同一时间只允许跑 1 份 build_push_images.sh（防止把 vfs storage 写坏） ----
+LOCK_FILE="/tmp/vvt-build_push_images.lock"
+cleanup_lock() { rm -f "${LOCK_FILE}" 2>/dev/null || true; }
+acquire_lock() {
+    if [ -e "${LOCK_FILE}" ]; then
+        OLD_PID=$(cat "${LOCK_FILE}" 2>/dev/null || true)
+        if [ -n "${OLD_PID}" ] && [ -d "/proc/${OLD_PID}" ] 2>/dev/null; then
+            OLD_CMD=$(ps -o args= -p "${OLD_PID}" 2>/dev/null | head -c 200 || true)
+            echo -e "${COLOR_RED}[ERR]${COLOR_RESET} 检测到另一份 build_push_images.sh 正在运行！（PID=${OLD_PID}）" >&2
+            echo -e "      启动命令: ${OLD_CMD}" >&2
+            echo -e "      如果确定是僵尸进程，先手动 kill ${OLD_PID}，或者删除 ${LOCK_FILE} 再启动。" >&2
+            exit 1
+        fi
+        echo -e "${COLOR_YELLOW}[WARN]${COLOR_RESET} 发现旧的 lock 文件（PID=${OLD_PID} 已不存在），自动清理后继续。"
+        rm -f "${LOCK_FILE}"
+    fi
+    echo $$ > "${LOCK_FILE}"
+    trap cleanup_lock EXIT INT TERM HUP
+}
+acquire_lock
+
 # ---- 参数解析 ----
 if [[ $# -lt 1 ]]; then
     cat <<'HELP'
@@ -77,24 +110,41 @@ log_section "环境检查"
 if ! command -v docker >/dev/null 2>&1; then
     log_warn "未检测到 docker，尝试自动通过 apt 安装（当前 HAI PyTorch 基础镜像通常自带，如未自带则需 ~3 分钟）..."
     set +e
-    sudo DEBIAN_FRONTEND=noninteractive apt-get update -y -q 2>&1 | tail -3
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+    as_root env DEBIAN_FRONTEND=noninteractive apt-get update -y -q 2>&1 | tail -3
+    as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
         docker.io docker-compose-v2 containerd nvidia-container-toolkit 2>&1 | tail -10
     set -e
     if command -v docker >/dev/null 2>&1; then
-        sudo systemctl enable docker 2>/dev/null || true
-        sudo systemctl restart docker 2>/dev/null || true
-        sudo usermod -aG docker "$(whoami)" 2>/dev/null || true
+        if command -v systemctl >/dev/null 2>&1; then
+            as_root systemctl enable docker 2>/dev/null || true
+            as_root systemctl restart docker 2>/dev/null || true
+        fi
+        if [[ "$IS_ROOT" != "1" ]]; then
+            as_root usermod -aG docker "$(whoami)" 2>/dev/null || true
+        fi
         log_ok "Docker 已自动安装: $(docker -v 2>/dev/null)"
-        log_warn "注意：usermod 加 docker 组需要重新登录生效，本次 build 命令全部加 sudo 兜底"
+        log_warn "注意：usermod 加 docker 组需要重新登录生效，本次 build 命令全部加 as_root 兜底"
     else
-        log_error "自动安装 docker 失败，请手动执行：sudo apt-get install -y docker.io docker-compose-v2 nvidia-container-toolkit"
+        log_error "自动安装 docker 失败，请手动执行：apt-get install -y docker.io docker-compose-v2 nvidia-container-toolkit"
         exit 1
     fi
 fi
-# 再兜底测一次 sudo docker 可用（免重新登录）
-if ! (sudo docker info >/dev/null 2>&1); then
-    log_warn "sudo docker info 无法连接 docker daemon..."
+# 构建统一的 docker 命令前缀（智能加不加 as_root）
+if (docker info >/dev/null 2>&1); then
+    DOCKER_RUN_PREFIX=""
+else
+    DOCKER_RUN_PREFIX="as_root"
+fi
+run_docker() {
+    if [[ -n "$DOCKER_RUN_PREFIX" ]]; then
+        $DOCKER_RUN_PREFIX docker "$@"
+    else
+        docker "$@"
+    fi
+}
+# 再兜底测一次可用
+if ! (run_docker info >/dev/null 2>&1); then
+    log_warn "run_docker info 无法连接 docker daemon..."
     # HAI 实例很可能没有真正的 systemd (dumb-init/LXC 容器环境)，systemctl restart 没用，直接手动起 dockerd
     log_info "尝试直接手动启动 dockerd（自动按 overlay2→fuse→vfs 顺序试 storage driver）..."
     declare -a DOCKERD_STORAGE_ARGS=()
@@ -102,13 +152,13 @@ if ! (sudo docker info >/dev/null 2>&1); then
     for sd in overlay2 fuse-overlayfs vfs; do
         DOCKERD_STORAGE_ARGS=(--storage-driver="$sd")
         log_info "  试 storage-driver=$sd ..."
-        sudo mkdir -p /var/run /var/lib/docker /var/log
+        as_root mkdir -p /var/run /var/lib/docker /var/log
         # 如果之前残留了 pid/socket，先清掉
-        sudo rm -f /var/run/docker.pid /var/run/docker.sock /tmp/dockerd.pid 2>/dev/null || true
-        sudo pkill -9 dockerd 2>/dev/null || true
+        as_root rm -f /var/run/docker.pid /var/run/docker.sock /tmp/dockerd.pid 2>/dev/null || true
+        as_root pkill -9 dockerd 2>/dev/null || true
         sleep 1
         # 后台起 dockerd，禁用网络栈相关组件（不需要 bridge/iptables/ip-masq 避免 LXC 嵌套权限不足）
-        sudo /usr/bin/dockerd "${DOCKERD_STORAGE_ARGS[@]}" \
+        as_root /usr/bin/dockerd "${DOCKERD_STORAGE_ARGS[@]}" \
             --iptables=false --ip-masq=false --bridge=none \
             --pidfile=/tmp/dockerd.pid \
             > /tmp/dockerd-build.log 2>&1 &
@@ -118,7 +168,7 @@ if ! (sudo docker info >/dev/null 2>&1); then
         for i in $(seq 1 20); do
             sleep 1
             if [[ -S /var/run/docker.sock ]]; then
-                if (sudo docker info >/dev/null 2>&1); then
+                if (run_docker info >/dev/null 2>&1); then
                     THIS_OK=1
                     DOCKERD_LAUNCHED=1
                     log_ok "dockerd 手动启动成功 (storage-driver=$sd, pid=$DOCKERD_PID)"
@@ -126,28 +176,115 @@ if ! (sudo docker info >/dev/null 2>&1); then
                 fi
             fi
             # 进程没了说明起失败了，试下一个 driver
-            if ! (sudo kill -0 "$DOCKERD_PID" 2>/dev/null); then
+            if ! (as_root kill -0 "$DOCKERD_PID" 2>/dev/null); then
                 break
             fi
         done
         # 本轮失败才杀残留；成功就保留后台 daemon 继续用
         if [[ "$THIS_OK" != "1" ]]; then
-            sudo kill -9 "$DOCKERD_PID" 2>/dev/null || true
+            as_root kill -9 "$DOCKERD_PID" 2>/dev/null || true
             wait "$DOCKERD_PID" 2>/dev/null || true
         fi
     done
     # 最后再试一次 info
     sleep 2
-    if [[ "$DOCKERD_LAUNCHED" != "1" ]] && ! (sudo docker info >/dev/null 2>&1); then
+    if [[ "$DOCKERD_LAUNCHED" != "1" ]] && ! (run_docker info >/dev/null 2>&1); then
         log_error "Docker daemon 仍不可用，请手动查看 /tmp/dockerd-build.log 排查；也可以跳过 build，用户仍可通过 hai-deploy.sh 走源码安装路径（10~20 分钟出页，功能不打折，只是首次部署稍慢）。"
         exit 1
     fi
 fi
 # nvidia 运行时可用就不报错，build 阶段可以走 CPU-only（镜像体积稍大但功能一致）
-if sudo docker info 2>/dev/null | grep -q nvidia; then
+if run_docker info 2>/dev/null | grep -q nvidia; then
     log_ok "Docker nvidia runtime 已就绪"
 else
     log_warn "未检测到 nvidia runtime，将用常规运行时构建镜像（用户 HAI 实例端运行时仍需 GPU）"
+fi
+# ---- 1.1.4.1) vfs storage 元数据一致性自检（非常关键！） ----
+#      前几次 build crash / kill 后，常见「image 元数据库记录了某 chainID 的 parent，但 /var/lib/docker/vfs/dir/<hash> 被手动删了」→ 报：
+#        failed to create rwlayer: <hash>: stat /var/lib/docker/vfs/dir/<hash>: no such file or directory
+#      解决：docker images -a 时如果 stderr 出现任何 'stat vfs/dir' / 'no such file or directory' →
+#            或者 docker build 首次 Using cache 时就会炸 → 我们在这里检测并主动 wipe 掉脏 storage 重启 daemon。
+ensure_vfs_storage_clean() {
+    local images_err docker_info_sd
+    docker_info_sd=$(run_docker info 2>/dev/null | grep -i "Storage Driver" | head -1 | awk -F: '{print $2}' | xargs || true)
+    log_info "Storage Driver 检测: ${docker_info_sd:-unknown}"
+    if [[ "${docker_info_sd}" != "vfs" ]]; then
+        # 非 vfs 不用管这个问题（overlay2 自己有 GC）
+        return 0
+    fi
+    # 用 docker images -a（会走 vfs graphdriver 校验所有镜像层元数据）测一次
+    images_err=$(run_docker images -a >/dev/null 2>&1; echo "") || true
+    images_err=$(run_docker images -a 2>&1 >/dev/null | tr -d '\r' || true)
+    if [[ -n "${images_err}" ]] && (echo "${images_err}" | grep -qE "stat .*vfs/dir|no such file or directory|failed to create rwlayer"); then
+        log_warn "检测到 vfs storage 元数据损坏（之前 build 崩溃留下的脏层）：${images_err}"
+        log_info "正在自动清理 /var/lib/docker/{image,vfs,tmp,tmp-old,buildkit,containers,network} + 重启 dockerd..."
+        # 停掉我们刚才手动起的 dockerd
+        local dpid
+        dpid=$(cat /tmp/dockerd.pid 2>/dev/null || true)
+        if [[ -n "${dpid}" ]]; then
+            as_root kill -9 "$dpid" 2>/dev/null || true
+            sleep 2
+        fi
+        as_root pkill -9 dockerd 2>/dev/null || true
+        as_root pkill -9 containerd 2>/dev/null || true
+        as_root pkill -9 -f "containerd-shim" 2>/dev/null || true
+        sleep 2
+        as_root rm -f /var/run/docker.pid /var/run/docker.sock /tmp/dockerd.pid 2>/dev/null || true
+        as_root rm -rf /var/lib/docker/image /var/lib/docker/vfs /var/lib/docker/tmp /var/lib/docker/tmp-old \
+                       /var/lib/docker/buildkit /var/lib/docker/containers /var/lib/docker/network 2>/dev/null || true
+        log_info "storage 清理完成，将重新走 dockerd 启动流程..."
+        # 返回非 0 → 让外层重新走手动启动 dockerd 流程（会重新选 driver、拉 base image，稳定）
+        return 1
+    fi
+    log_info "vfs storage 元数据自检通过（${docker_info_sd}）"
+    return 0
+}
+if ! ensure_vfs_storage_clean; then
+    # 递归式：重来一次 ensure docker daemon（用同样的存储选择逻辑，只要不再检测到损坏就过）
+    if ! (run_docker info >/dev/null 2>&1); then
+        log_info "重新启动 dockerd（带干净 storage）..."
+        declare -a DOCKERD_STORAGE_ARGS=()
+        DOCKERD_LAUNCHED=0
+        for sd in overlay2 fuse-overlayfs vfs; do
+            DOCKERD_STORAGE_ARGS=(--storage-driver="$sd")
+            log_info "  试 storage-driver=$sd（重新启动 clean dockerd）..."
+            as_root mkdir -p /var/run /var/lib/docker /var/log
+            as_root rm -f /var/run/docker.pid /var/run/docker.sock /tmp/dockerd.pid 2>/dev/null || true
+            as_root pkill -9 dockerd 2>/dev/null || true
+            as_root pkill -9 containerd 2>/dev/null || true
+            sleep 1
+            as_root /usr/bin/dockerd "${DOCKERD_STORAGE_ARGS[@]}" \
+                --iptables=false --ip-masq=false --bridge=none \
+                --pidfile=/tmp/dockerd.pid \
+                > /tmp/dockerd-build.log 2>&1 &
+            DOCKERD_PID=$!
+            THIS_OK=0
+            for i in $(seq 1 20); do
+                sleep 1
+                if [[ -S /var/run/docker.sock ]]; then
+                    if (run_docker info >/dev/null 2>&1); then
+                        THIS_OK=1
+                        DOCKERD_LAUNCHED=1
+                        log_ok "dockerd 重启成功 (storage-driver=$sd, pid=$DOCKERD_PID, clean storage)"
+                        # 再跑一次一致性自检（这次肯定过）
+                        ensure_vfs_storage_clean || true
+                        break 2
+                    fi
+                fi
+                if ! (as_root kill -0 "$DOCKERD_PID" 2>/dev/null); then
+                    break
+                fi
+            done
+            if [[ "$THIS_OK" != "1" ]]; then
+                as_root kill -9 "$DOCKERD_PID" 2>/dev/null || true
+                wait "$DOCKERD_PID" 2>/dev/null || true
+            fi
+        done
+        if [[ "$DOCKERD_LAUNCHED" != "1" ]] && ! (run_docker info >/dev/null 2>&1); then
+            log_error "clean dockerd 重启仍不可用，请查看 /tmp/dockerd-build.log"
+            exit 1
+        fi
+    fi
 fi
 for DIR in index-tts/.venv index-tts/checkpoints; do
     if [[ ! -d "${PROJECT_ROOT}/${DIR}" ]]; then
@@ -158,6 +295,182 @@ done
 SIZE_VENV=$(du -sh "${PROJECT_ROOT}/index-tts/.venv" | awk '{print $1}')
 SIZE_CKPT=$(du -sh "${PROJECT_ROOT}/index-tts/checkpoints" | awk '{print $1}')
 log_info ".venv = ${SIZE_VENV},  checkpoints = ${SIZE_CKPT}"
+
+# ---- 1.1.6) 关键：prepare_staging_dir() - 为 HAI 220G 小盘优化的构建上下文
+#             vfs storage driver 每 1 个 RUN/COPY 指令 = 父层全量物理复制一次
+#             因此我们做了 2 个结构性优化降低磁盘峰值占用：
+#        优化 A（Dockerfile 里做）：把 8+ 个 COPY/RUN 合并成 1 COPY + 1 RUN
+#                  减少 vfs 快照层数 8 → 2，省约 6×24G = 144GB 峰值占用
+#        优化 B（这里做）：
+#          - STAGING_DIR 放在 /tmp/.vvt-staging-XXXX（tmpfs 内存盘 + 不在 PROJECT_ROOT 里，
+#            彻底避免 cp -a \".../.\" into itself 的路径嵌套经典报错）
+#          - 先自动 apt install rsync（腾讯内网源 ~2 秒装好，失败退回 cp 兜底）
+#          - rsync/cp 源码树 → 干净的 staging 目录，
+#            排除所有运行时写入 / 缓存 / __pycache__ / *.pyc / data/output/run/sock 等
+#          - 把 Dockerfile、docker-entrypoint.sh 复制进 staging
+#          - docker build 上下文 = /tmp/.vvt-staging-XXXX
+#          - build 前后立刻 rm -rf staging（trap + 成功后手动双保险）释放 ~20G
+# ----
+STAGING_DIR="/tmp/.vvt-staging-$(date +%s)"
+STAGING_READY=0
+cleanup_staging() {
+    if [[ -n "${STAGING_DIR:-}" ]] && [[ -d "${STAGING_DIR}" ]]; then
+        log_info "清理 staging 目录：${STAGING_DIR}"
+        rm -rf "${STAGING_DIR}" 2>/dev/null || true
+    fi
+}
+trap cleanup_staging EXIT INT TERM
+
+prepare_staging_dir() {
+    log_section "准备构建上下文 staging：${STAGING_DIR}（HAI 小盘优化，省 ~140G 峰值占用）"
+    [[ -d "${STAGING_DIR}" ]] && rm -rf "${STAGING_DIR}" 2>/dev/null
+    mkdir -p "${STAGING_DIR}"
+
+    # 先尽量自动装好 rsync（腾讯内网 mirrors.tencentyun.com ~2 秒装好；装不上再 cp 兜底）
+    if ! command -v rsync >/dev/null 2>&1; then
+        log_info "宿主机未安装 rsync，尝试 apt-get install -y rsync（~2秒装好）..."
+        if command -v apt-get >/dev/null 2>&1; then
+            (apt-get update -y -q 2>&1 | tail -3) || true
+            if apt-get install -y -q --no-install-recommends rsync 2>&1 | tail -3; then
+                log_ok "rsync 已安装：$(command -v rsync)"
+            else
+                log_warn "apt 装 rsync 失败，退回 find | cp -a 兜底（也能用，但 staging 在 /tmp 下不会嵌套）"
+            fi
+        else
+            log_warn "没有 apt-get，退回 cp 兜底"
+        fi
+    fi
+
+    if command -v rsync >/dev/null 2>&1; then
+        log_info "使用 rsync 增量同步 → staging（速度快、自动去冗余、天然无嵌套风险）"
+        rsync -a --delete \
+              --exclude='.git' \
+              --exclude='.gitignore' \
+              --exclude='.vscode' \
+              --exclude='.idea' \
+              --exclude='.venv' \
+              --exclude='node_modules' \
+              --exclude='__pycache__' \
+              --exclude='*.pyc' \
+              --exclude='*.pyo' \
+              --exclude='*.log' \
+              --exclude='*.sock' \
+              --exclude='.DS_Store' \
+              --exclude='frontend/.vite' \
+              --exclude='frontend/dist/*-stats.json' \
+              --exclude='data/logs/*' \
+              --exclude='data/run/*' \
+              --exclude='data/outputs/*' \
+              --exclude='data/uploads/*' \
+              --exclude='data/temp/*' \
+              --exclude='data/stats/*' \
+              --exclude='.vvt-staging*' \
+              --exclude='build-v*.log' \
+              --exclude='nohup.out' \
+              "${PROJECT_ROOT}/" \
+              "${STAGING_DIR}/" 2>&1 | tail -20 || true
+    else
+        log_warn "没有 rsync，使用 find + cp -a（staging 在 /tmp，不会出现 cp into itself 的嵌套报错）"
+        # STAGING_DIR 在 /tmp/... 下，跟 ${PROJECT_ROOT} 完全不在一个路径里，
+        # 所以 cp -a PROJECT_ROOT/... → STAGING_DIR/... 不会自我嵌套。
+        # 但我们仍然用 find 主动排除 build-v*.log / nohup.out / __pycache__ 等无用文件。
+        cd "${PROJECT_ROOT}"
+        find . -maxdepth 1 -mindepth 1 \
+             ! -name '.vvt-staging*' \
+             ! -name 'build-v*.log' \
+             ! -name 'nohup.out' \
+             -exec cp -a {} "${STAGING_DIR}/" \; 2>/dev/null || true
+        # 手动再清理无用目录
+        for d in .git .vscode .idea __pycache__ .venv node_modules frontend/.vite \
+                 data/logs data/run data/outputs data/uploads data/temp data/stats; do
+            rm -rf "${STAGING_DIR:?}/${d}" 2>/dev/null || true
+        done
+        find "${STAGING_DIR}" \( -name "*.pyc" -o -name "*.pyo" -o -name "*.log" -o -name "*.sock" -o -name ".DS_Store" \) \
+             -delete 2>/dev/null || true
+    fi
+
+    # 关键：把 Dockerfile 和 docker-entrypoint.sh 复制到 staging
+    for need in Dockerfile docker-entrypoint.sh .env.example; do
+        if [[ -f "${PROJECT_ROOT}/${need}" ]]; then
+            cp -a "${PROJECT_ROOT}/${need}" "${STAGING_DIR}/${need}"
+        fi
+    done
+
+    # 关键必带的大目录二次确认（rsync 误 exclude 了就白搭）：
+    for must in index-tts/.venv index-tts/checkpoints frontend/node_modules frontend/dist; do
+        if [[ -d "${PROJECT_ROOT}/${must}" ]]; then
+            if [[ ! -d "${STAGING_DIR}/${must}" ]]; then
+                log_warn "staging 缺少 ${must}，手动复制..."
+                mkdir -p "${STAGING_DIR}/${must%/*}"
+                cp -a "${PROJECT_ROOT}/${must}" "${STAGING_DIR}/${must}"
+            fi
+            sz=$(du -sh "${STAGING_DIR}/${must}" | awk '{print $1}')
+            log_info "  staging 含：${must} (${sz})"
+        elif [[ "$must" == "frontend/dist" ]]; then
+            log_warn "宿主机 frontend/dist 不存在，Dockerfile 的兜底 RUN 会 fallback 到 5173 vite dev。可手动 npm run build 重试"
+        fi
+    done
+
+    # .dockerignore 自检最后再做一次
+    if [[ -f "${STAGING_DIR}/.dockerignore" ]] && grep -Eq '^\s*frontend/dist\s*$' "${STAGING_DIR}/.dockerignore"; then
+        log_error "staging 中的 .dockerignore 仍有 frontend/dist 行！会把宿主机构建好的 dist 从 build context 中剔除"
+        log_error "请手动删除 ${PROJECT_ROOT}/.dockerignore 里的 frontend/dist 行"
+        exit 1
+    fi
+
+    STAG_SIZE=$(du -sh "${STAGING_DIR}" | awk '{print $1}')
+    log_ok "staging 就绪：${STAGING_DIR} = ${STAG_SIZE}（tmpfs 内存盘，build 结束后会自动 rm 释放）"
+    export STAGING_READY=1
+}
+
+# ---- 1.1.5) 关键：宿主机构建 frontend/dist（避免 Docker Stage 1 容器内 npm ci 崩溃导致 tsc 丢失） ----
+#      宿主机有完整的 node_modules + package-lock.json，直接在这里跑更稳
+#      dist/ 会被 Stage 2 的 COPY . /app 直接带进镜像，优先级高于 Stage 1 容器内 build
+log_section "宿主机构建前端 frontend/dist（稳定，优先于容器内 Stage 1 build）"
+DIST_READY=0
+cd "${PROJECT_ROOT}/frontend"
+if [ -d node_modules ] && [ -x node_modules/.bin/tsc ] && [ -x node_modules/.bin/vite ]; then
+    log_info "本地 node_modules + tsc + vite 均已就绪，直接 build"
+    if npm run build 2>&1 | tail -20; then
+        DIST_COUNT=$(find dist -type f 2>/dev/null | wc -l)
+        if [ -f dist/index.html ] && [ "$DIST_COUNT" -gt 1 ]; then
+            log_ok "前端 build 成功：dist/index.html 存在（共 ${DIST_COUNT} 个文件）"
+            DIST_READY=1
+        else
+            log_warn "npm run build 返回 0，但 dist/index.html 不合法（count=$DIST_COUNT），尝试跳过 tsc 直接 vite build..."
+        fi
+    else
+        log_warn "宿主机构建 frontend/dist 失败（npm run build 非 0），尝试跳过 tsc 直接 vite build..."
+    fi
+    # 兜底：不跑 tsc，直接 vite build（vite 只做打包，不做 TS 类型检查）
+    if [[ "$DIST_READY" != "1" ]]; then
+        if (npx --no-install vite build 2>&1 | tail -20) && [ -f dist/index.html ]; then
+            DIST_COUNT=$(find dist -type f 2>/dev/null | wc -l)
+            log_ok "vite build（无 tsc）兜底成功（共 ${DIST_COUNT} 个文件）"
+            DIST_READY=1
+        fi
+    fi
+else
+    log_warn "宿主机 frontend/node_modules/tsc/vite 不完整，尝试 npm ci 重装..."
+    if (npm ci --no-audit --no-fund --legacy-peer-deps 2>&1 | tail -20) && npm run build 2>&1 | tail -20; then
+        if [ -f dist/index.html ]; then
+            log_ok "本地 npm ci + build 成功"
+            DIST_READY=1
+        fi
+    fi
+fi
+cd "${PROJECT_ROOT}"
+if [[ "$DIST_READY" == "1" ]]; then
+    SIZE_DIST=$(du -sh "${PROJECT_ROOT}/frontend/dist" | awk '{print $1}')
+    log_info "frontend/dist 就绪，大小=${SIZE_DIST}，已解除 .dockerignore 对 frontend/dist 的忽略，将通过 COPY . /app 注入镜像（8080 端口可用）"
+    # 关键自检：确认 .dockerignore 真的没有再 ignore frontend/dist
+    if grep -Eq '^\s*frontend/dist\s*$' "${PROJECT_ROOT}/.dockerignore"; then
+        log_error ".dockerignore 仍有 frontend/dist 行！会导致 build context 丢掉 dist，必须手动删掉"
+        exit 1
+    fi
+else
+    log_warn "宿主机构建 frontend/dist 失败，Docker 构建将退回 Stage 1 容器内 build + 最后兜底到 5173 vite dev server"
+fi
 
 # ---- 1.2) 自动选构建期 apt 镜像源（解决 docker 容器内 apt DNS 失败 / 公网慢的问题） ----
 #      优先级: APT_MIRROR env 覆盖 > CLI --apt-mirror > tencent-intranet(能 ping 通就用) > tencent > china > official
@@ -179,23 +492,13 @@ BUILD_LOG="/tmp/vvt-build-$(date +%s).log"
 : > "${BUILD_LOG}"
 log_info "构建日志实时写入: ${BUILD_LOG}，终端同时实时显示（避免像卡住）"
 
-
-# ---- 1.5) 统一 docker 调用：若普通 docker 连不上 daemon，则自动加 sudo ----
-#      HAI 默认 ubuntu 用户不在 docker 组，usermod 要重登录生效，build 期间直接 sudo 最稳。
-DOCKER_SUDO=""
-if ! (docker info >/dev/null 2>&1); then
-    if (sudo -n docker info >/dev/null 2>&1); then
-        DOCKER_SUDO="sudo"
-        log_info "当前用户无 docker 权限，自动改用 sudo docker"
-    fi
-fi
-run_docker() {
-    if [[ -n "$DOCKER_SUDO" ]]; then
-        $DOCKER_SUDO docker "$@"
-    else
-        docker "$@"
-    fi
-}
+# ---- 1.4) 准备 staging 目录（HAI 220G 小盘优化：COPY/RUN 合并到 2 层 + 上下文干净） ----
+prepare_staging_dir
+BUILD_CONTEXT="${STAGING_DIR}"
+# Dockerfile 路径：使用项目根的 Dockerfile（staging 里也复制了一份，但 -f 指定 PROJECT_ROOT 更稳）
+BUILD_DOCKERFILE="${PROJECT_ROOT}/Dockerfile"
+[ -f "${STAGING_DIR}/Dockerfile" ] || cp -a "${BUILD_DOCKERFILE}" "${STAGING_DIR}/Dockerfile"
+[ -f "${STAGING_DIR}/docker-entrypoint.sh" ] || cp -a "${PROJECT_ROOT}/docker-entrypoint.sh" "${STAGING_DIR}/docker-entrypoint.sh"
 
 # ---- 1) Dockerfile 语法预检查（快速失败） ----
 log_section "Dockerfile 语法预检"
@@ -213,18 +516,24 @@ export BUILDKIT_PROGRESS=plain
 # ---- 2.1) 判断 docker 构建能力：优先 buildx → 次选 BuildKit 原生 build（--progress 可选） → 最后 legacy builder ----
 BUILD_CMD="build"
 BUILD_EXTRA_ARGS=()
+# 0. 强制 --network=host（HAI 环境下我们手动起 dockerd 时带了 --bridge=none，无 docker bridge 网络，
+#    build 容器内默认网络没有 DNS/路由，会导致 apt-get update DNS 失败 → 所有包 Unable to locate package。
+#    --network=host 让 build 容器直接共享宿主机网络栈，既能解析 HAI 内网 mirrors.tencentyun.com，
+#    又能走公网，是当前环境下唯一可靠的 build 联网方式。
+BUILD_EXTRA_ARGS+=(--network=host)
 # 1. 优先 docker buildx build（支持 --progress + 更稳的多阶段）
 if (run_docker buildx version >/dev/null 2>&1); then
     BUILD_CMD="buildx build"
-    BUILD_EXTRA_ARGS=(--progress=plain --load)
-    log_info "检测到 docker buildx，使用 buildx build（更稳的多阶段构建）"
+    BUILD_EXTRA_ARGS=(--network=host --progress=plain --load)
+    log_info "检测到 docker buildx，使用 buildx build（--network=host，更稳的多阶段构建）"
 else
     # 2. 没有 buildx 就看 legacy build --help 里有没有 --progress（有的话可以开 plain）
     if (run_docker build --help 2>/dev/null | grep -qw -- '--progress'); then
-        BUILD_EXTRA_ARGS=(--progress=plain)
-        log_info "docker build 原生支持 --progress，使用 plain 模式"
+        BUILD_EXTRA_ARGS=(--network=host --progress=plain)
+        log_info "docker build 原生支持 --progress，使用 plain 模式 + --network=host"
     else
-        log_warn "当前 docker.io 是 legacy builder（无 --progress），跳过 BuildKit 特有参数，直接用普通 docker build"
+        log_warn "当前 docker.io 是 legacy builder（无 --progress），跳过 BuildKit 特有参数，使用普通 docker build + --network=host"
+        BUILD_EXTRA_ARGS=(--network=host)
         # legacy builder 不认 DOCKER_BUILDKIT=1 的 --progress，但普通 build 一样能走多阶段 FROM=frontend-build
         unset DOCKER_BUILDKIT
         unset BUILDKIT_PROGRESS
@@ -232,22 +541,29 @@ else
 fi
 
 run_docker ${BUILD_CMD} \
-    --file Dockerfile \
+    --file "${BUILD_DOCKERFILE}" \
     --tag "${TMP_TAG}" \
     --build-arg "BUILD_VERSION=${VERSION}" \
     --build-arg "APT_MIRROR=${BUILD_APT_MIRROR}" \
     "${BUILD_EXTRA_ARGS[@]}" \
-    "${PROJECT_ROOT}" 2>&1 | tee -a "${BUILD_LOG}" | tail -n +1
+    "${BUILD_CONTEXT}" 2>&1 | tee -a "${BUILD_LOG}" | tail -n +1
 
 BUILD_RC=${PIPESTATUS[0]}
 if [[ "${BUILD_RC}" != "0" ]]; then
     log_error "Docker build 失败（返回码 ${BUILD_RC}）。完整日志见 ${BUILD_LOG}，最后 60 行："
     tail -60 "${BUILD_LOG}"
+    # build 失败但 staging 可能占用 ~20G，手动释放（EXIT trap 也会触发）
+    cleanup_staging || true
     log_warn "也可以跳过 build 直接跳过镜像部署（hai-deploy.sh 有源码 install.sh 兜底，用户端 10~20 分钟出页）。"
     exit 1
 fi
 
 log_ok "本地镜像构建完成: ${TMP_TAG}"
+
+# build 成功后立即释放 staging（~20-25GB 立刻回到磁盘可用空间）
+# 防止后面 docker push 阶段 staging 还占着 20G 导致磁盘余量紧张
+cleanup_staging || true
+log_info "staging 目录已释放（BUILD_CONTEXT），可用空间增加约 20-25GB"
 
 # ---- 3) 打额外 tag（latest + 版本号） ----
 log_section "打 tag"
