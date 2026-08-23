@@ -432,16 +432,13 @@ prepare_staging_dir() {
     PAYLOAD_TAR="${STAGING_DIR}/payload.tar"
     (
         cd "${STAGING_DIR}"
-        # 打 tar 时主动排除：payload.tar 自己（递归）、Dockerfile、docker-entrypoint.sh（3 个会在下面单独 cp 进镜像不通过 payload）
-        # 保留：Dockerfile 仍然 COPY payload.tar 到 /tmp/.vvt-payload.tar，
-        #        而真正的 Dockerfile 本身在 build context 根，由 -f 选项读取；
-        #        docker-entrypoint.sh 也由最后 COPY docker-entrypoint.sh /usr/local/bin/ 单独处理
+        # ⚠️ 不要加 --totals：HAI vfs + LXC 下 22G tar 读两遍 + 回传到日志管道极易 hang IO
+        #     只做 tar cf（稳定、无 stdout 风暴），大小我们后面 du -sh 报
         tar \
             --exclude='./payload.tar' \
             --exclude='./Dockerfile' \
             --exclude='./docker-entrypoint.sh' \
-            --totals \
-            -cf "${PAYLOAD_TAR}" . 2>&1 | tail -10
+            -cf "${PAYLOAD_TAR}" .
     )
     # payload.tar 必须存在，否则 docker build 会在 COPY payload.tar 那步直接 fail
     if [[ ! -s "${PAYLOAD_TAR}" ]]; then

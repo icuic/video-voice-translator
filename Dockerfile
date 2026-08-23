@@ -83,20 +83,24 @@ WORKDIR /app
 # 目录（/tmp/.vvt-staging-*）里 tar 出来，放在 build context 根下，
 # 所以 docker build 时 build context 里就一个 payload.tar + Dockerfile +
 # docker-entrypoint.sh（约 22GB，和旧 COPY 一样大小，但层数少了 1 层大的）。
-COPY payload.tar /tmp/.vvt-payload.tar
+#
+# ⚠️ 重要：COPY payload.tar 的目标路径必须是 根目录 /.vvt-payload.tar（不是 /tmp）
+#         HAI vfs 下 /tmp 属于该 RUN layer，父拷贝时会把 /tmp/ 22G tar 一起父拷 → 卡死 IO；
+#         放 /. 根下独立文件，就不会触发 /tmp 额外父拷贝。
+COPY payload.tar /.vvt-payload.tar
 
 # ---- ③ 合并：tar 解压 payload.tar 到 /app + 所有 post-install（chmod/chown/权限/
 #        预置目录/dist 校验/python软链/node软链/预置.env/sanity/BUILD_VERSION）
 #        —— 第 2 个（也是最后 1 个）大层；VFS 全父拷贝只发生这一次 ----
-# 为什么合并：vfs 每 1 个 RUN/COPY = 1 次父层全量物理复制
-#   旧 8 个 RUN/COPY = 24 * 8 = 192GB 峰值，217G 盘 100%
-#   新 2 个大层（apt + payload/post）+ 2 条 entrypoint 小层 = 约 4 层
+# ⚠️ 重要：tar 不要加 --totals（它会完整读两遍 tar，第一遍算总量，第二遍解，
+#         22G tar 经 containerd→dockerd→build 日志回传，HAI LXC vfs 下极易 hang IO）
+#         只做 tar xpf（保留权限、稳定、快速、无大段 stdout）。
 RUN set -eux; \
     # (0) 先 tar xf payload.tar 进 /app（替代旧 COPY . /app）
     #     tar 会保留权限+owner，但我们后面 chown -R vvt:vvt，所以先 root 解压没问题
     mkdir -p /app; \
-    tar --totals -xf /tmp/.vvt-payload.tar -C /app; \
-    rm -f /tmp/.vvt-payload.tar; \
+    tar xpf /.vvt-payload.tar -C /app; \
+    rm -f /.vvt-payload.tar; \
     # (A) 脚本可执行
     for s in hai-deploy.sh configure.sh update_project.sh install.sh manage-supervisor.sh; do \
         [ -x "/app/$s" ] || chmod +x "/app/$s" 2>/dev/null || true; \
