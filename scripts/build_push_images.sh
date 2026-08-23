@@ -420,6 +420,37 @@ prepare_staging_dir() {
 
     STAG_SIZE=$(du -sh "${STAGING_DIR}" | awk '{print $1}')
     log_ok "staging 就绪：${STAGING_DIR} = ${STAG_SIZE}（tmpfs 内存盘，build 结束后会自动 rm 释放）"
+
+    # ---- 关键结构性优化：在 staging 根打 payload.tar ----
+    # 新 Dockerfile 不再 COPY . /app + 大 RUN（vfs 两条指令 = 两次父层全量物理拷贝 ≈ 44G 叠加峰值）
+    # 新 Dockerfile：COPY payload.tar（小层，= tar 纯字节流不展开到 /app）
+    #              + 1 条 RUN（tar xf payload.tar 到 /app + chmod/chown/软链/dist 校验/sanity 全部合并在同一 layer）
+    # → VFS 快照层数：COPY 大项目 + RUN 大 post = 2 层 ≈ 44G 峰值
+    #                    → COPY payload.tar（小层）+ RUN 解压+post（单 1 层 22G） = 约 24G 峰值
+    # 省掉的一层 "22G 父 copy" 直接把 217G 盘的峰值从 133G → ≈ 95G 左右，稳稳 <80%。
+    log_info "在 staging 根生成 payload.tar（Dockerfile COPY payload.tar + RUN tar xf 合并，VFS 省 1 层 22G 快照峰值）"
+    PAYLOAD_TAR="${STAGING_DIR}/payload.tar"
+    (
+        cd "${STAGING_DIR}"
+        # 打 tar 时主动排除：payload.tar 自己（递归）、Dockerfile、docker-entrypoint.sh（3 个会在下面单独 cp 进镜像不通过 payload）
+        # 保留：Dockerfile 仍然 COPY payload.tar 到 /tmp/.vvt-payload.tar，
+        #        而真正的 Dockerfile 本身在 build context 根，由 -f 选项读取；
+        #        docker-entrypoint.sh 也由最后 COPY docker-entrypoint.sh /usr/local/bin/ 单独处理
+        tar \
+            --exclude='./payload.tar' \
+            --exclude='./Dockerfile' \
+            --exclude='./docker-entrypoint.sh' \
+            --totals \
+            -cf "${PAYLOAD_TAR}" . 2>&1 | tail -10
+    )
+    # payload.tar 必须存在，否则 docker build 会在 COPY payload.tar 那步直接 fail
+    if [[ ! -s "${PAYLOAD_TAR}" ]]; then
+        log_error "生成 payload.tar 失败（文件不存在或大小为 0）：${PAYLOAD_TAR}"
+        exit 1
+    fi
+    TAR_SIZE=$(du -sh "${PAYLOAD_TAR}" | awk '{print $1}')
+    log_ok "payload.tar 已就绪：${PAYLOAD_TAR} = ${TAR_SIZE}（与旧 COPY . /app 相同大小，但 VFS 省 1 层 22G 快照）"
+
     export STAGING_READY=1
 }
 

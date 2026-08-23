@@ -75,25 +75,28 @@ ENV APP_ROOT=/app \
 
 WORKDIR /app
 
-# ---- ② 复制完整项目（包含：源码、index-tts/.venv、index-tts/checkpoints、
-#             frontend/node_modules、frontend/dist、所有脚本） ——第 2 个大层 ----
-# 注意：镜像最终包含的内容应该全部来自 scripts/build_push_images.sh 的
-#       prepare_staging_dir() 产物（.vvt-staging 目录），
-#       该脚本会：
-#         1) 先在宿主机前端目录 npm run build -> frontend/dist
-#         2) 用 rsync 把项目（含 .venv/checkpoints/node_modules/dist）
-#            拷贝到 .vvt-staging，排除 .git、__pycache__、*.pyc、
-#            data/run、*.sock、frontend/.vite、data/outputs、data/uploads 等
-#       docker build 上下文 = .vvt-staging，而不是项目根
-COPY . /app
+# ---- ② payload.tar 模式：把「项目文件 COPY」+「合并 post-install」
+#      合成单 1 个 RUN，VFS 下只产 1 次全量 24GB 父拷贝，
+#      替代旧 COPY . /app + RUN 两条（会产 2 次 24GB，217G 小盘峰值超爆）
+#
+# payload.tar 由 scripts/build_push_images.sh prepare_staging_dir 在 build context
+# 目录（/tmp/.vvt-staging-*）里 tar 出来，放在 build context 根下，
+# 所以 docker build 时 build context 里就一个 payload.tar + Dockerfile +
+# docker-entrypoint.sh（约 22GB，和旧 COPY 一样大小，但层数少了 1 层大的）。
+COPY payload.tar /tmp/.vvt-payload.tar
 
-# ---- ③ 合并所有 post-install 动作（chmod/chown/权限/预置目录/dist 校验/
-#        python软链/node软链/预置.env） —— 第 3 个大层 ----
-# 为什么都合并成 1 个 RUN：
-#   vfs 每 1 个 RUN/COPY = 1 次全父层物理复制 = 24GB * 层数
-#   拆成 8 个 RUN/COPY = 24 * 8 = 192GB，220G 盘直接炸
-#   合并成 1 个 RUN = 24 * 1 = 24GB（加父层 32G 总 ~56G）
+# ---- ③ 合并：tar 解压 payload.tar 到 /app + 所有 post-install（chmod/chown/权限/
+#        预置目录/dist 校验/python软链/node软链/预置.env/sanity/BUILD_VERSION）
+#        —— 第 2 个（也是最后 1 个）大层；VFS 全父拷贝只发生这一次 ----
+# 为什么合并：vfs 每 1 个 RUN/COPY = 1 次父层全量物理复制
+#   旧 8 个 RUN/COPY = 24 * 8 = 192GB 峰值，217G 盘 100%
+#   新 2 个大层（apt + payload/post）+ 2 条 entrypoint 小层 = 约 4 层
 RUN set -eux; \
+    # (0) 先 tar xf payload.tar 进 /app（替代旧 COPY . /app）
+    #     tar 会保留权限+owner，但我们后面 chown -R vvt:vvt，所以先 root 解压没问题
+    mkdir -p /app; \
+    tar --totals -xf /tmp/.vvt-payload.tar -C /app; \
+    rm -f /tmp/.vvt-payload.tar; \
     # (A) 脚本可执行
     for s in hai-deploy.sh configure.sh update_project.sh install.sh manage-supervisor.sh; do \
         [ -x "/app/$s" ] || chmod +x "/app/$s" 2>/dev/null || true; \
@@ -143,7 +146,7 @@ RUN set -eux; \
     chown -R vvt:vvt /app; \
     chmod 755 /app /app/index-tts /app/frontend /app/backend /app/scripts 2>/dev/null || true; \
     \
-    # (G) 前端 dist 合法性最终校验（唯一来源：宿主机 npm run build 产物 COPY 进镜像）
+    # (G) 前端 dist 合法性最终校验（唯一来源：宿主机 npm run build 产物 tar 进镜像）
     #     合法：index.html 存在 + 文件数 > 1（Vite 正常 3 个文件）
     #     不合法：清除残留占位，docker-entrypoint.sh 会 fallback 到 5173 vite dev server
     HOST_DIST="/app/frontend/dist"; \
